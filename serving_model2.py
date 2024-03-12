@@ -4,9 +4,11 @@ import logging
 from ray import serve
 import layoutparser as lp
 from typing import Dict
+import requests
 import numpy as np
 import cv2
 from paddleocr import PaddleOCR , PPStructure
+from label_studio_sdk.utils import parse_config
 
 ray_serve_logger = logging.getLogger("ray.serve")
 @serve.deployment(route_prefix="/",num_replicas=1, ray_actor_options={"num_cpus": 2 ,'num_gpus':1})
@@ -36,7 +38,13 @@ class Translator:
         image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         
         return image
-    
+    def get_image_from_labelstudio(self,task_id,image_path):
+        label_studio_url = "https://labelstudio.debras.in"
+        image_url = f'{label_studio_url}/api/tasks/{task_id}{image_path}'
+        ray_serve_logger.info(image_url)
+        response = requests.get(image_url)
+        image_data = response.content
+        return image_data
     async def __call__(self, request:Request):
         if request.url.path == "/health":
             return {
@@ -51,11 +59,22 @@ class Translator:
             ray_serve_logger.info(json_data)      
             results = []
             tasks = json_data.get("tasks")
+            label_config = parse_config(json_data.get("label_config"))
+            ray_serve_logger.info(label_config)
+            from_name = list(label_config.items())[0][0]
+            ray_serve_logger.info(from_name)
+            to_name = label_config.get("label").get("to_name")[0]
+            labels = label_config.get("label").get("labels")
+            ray_serve_logger.info(to_name)
+            ray_serve_logger.info(labels)
             for task in tasks:
                 ray_serve_logger.info(task)
+                task_id = task.get("id")
                 data = task.get("data")
                 image_path = data.get("image")
-                
+                image_data = cv2.imread(self.get_image_from_labelstudio(task_id,image_path))
+                layout_predicted = self.model.detect(image_data)
+                ray_serve_logger.info(layout_predicted)
                 # for field_name, uploaded_file in form_data.items():
                 #     # Get the binary content of the uploaded file
                 #     binary_data = await uploaded_file.read()
