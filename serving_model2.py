@@ -6,6 +6,7 @@ import layoutparser as lp
 from typing import Dict
 import requests
 import numpy as np
+from flask import jsonify
 import cv2
 from paddleocr import PaddleOCR , PPStructure
 from label_studio_sdk.utils import parse_config
@@ -56,7 +57,8 @@ class Translator:
             }
         elif request.url.path == "/predict":
             json_data = await request.json()  
-            ray_serve_logger.info(json_data)      
+            ray_serve_logger.info(json_data)
+            predictions = []   
             results = []
             tasks = json_data.get("tasks")
             label_config = parse_config(json_data.get("label_config"))
@@ -72,9 +74,38 @@ class Translator:
                 task_id = task.get("id")
                 data = task.get("data")
                 image_path = data.get("image")
-                image_data = cv2.imread(self.get_image_from_labelstudio(task_id,image_path))
+                # image_data = cv2.imread(self.get_image_from_labelstudio(task_id,image_path))
+                image_data = cv2.imread("/root/rayserver/201617010090_page17.png")
+                img_width, img_height = image_data.shape[1], image_data.shape[0]
                 layout_predicted = self.model.detect(image_data)
                 ray_serve_logger.info(layout_predicted)
+                results = list()
+                
+                for block in layout_predicted:
+                    ray_serve_logger.info(block)
+                    l = [block.type, block.block.x_1 - 30, block.block.y_1,block.block.x_2 + 10, block.block.y_2]
+                    _,x,y,xmax,ymax = l
+                    output_label = block.type
+                    score = block.score
+                    results.append({
+                    'from_name': from_name,
+                    'to_name': to_name,
+                    'type': 'rectanglelabels',
+                    'value': {
+                        'rectanglelabels': [output_label],
+                        'x': float(x) / img_width * 100,
+                        'y': float(y) / img_height * 100,
+                        'width': (float(xmax) - float(x)) / img_width * 100,
+                        'height': (float(ymax) - float(y)) / img_height * 100,
+                    },
+                    'score': score,
+                    })
+                    # ray_serve_logger.info(results)
+                predictions.append({
+                    "result":results,
+                    "score": score,
+                    "model_version":"something"
+                    })
                 # for field_name, uploaded_file in form_data.items():
                 #     # Get the binary content of the uploaded file
                 #     binary_data = await uploaded_file.read()
@@ -90,7 +121,8 @@ class Translator:
                 #     results.append(co_ordinates)
                 
                 # Return the result as a dictionary
-            return {"layout_result": results}
+            ray_serve_logger.info(predictions)
+            return predictions
 
 ray.init(address="auto")
 # Create and bind the deployment
