@@ -11,6 +11,7 @@ import cv2
 from paddleocr import PaddleOCR , PPStructure
 from label_studio_sdk.utils import parse_config
 
+
 ray_serve_logger = logging.getLogger("ray.serve")
 @serve.deployment(route_prefix="/",num_replicas=1, ray_actor_options={"num_cpus": 2 ,'num_gpus':1})
 class Translator:
@@ -101,6 +102,15 @@ class Translator:
                     'score': score,
                     })
                     # ray_serve_logger.info(results)
+                res = requests.post("https://labelstudio.replace.io/api/predictions/",headers={
+                    "Authorization":"Token replace_token",
+                },json={
+                    "result":results,
+                    "score": score,
+                    "model_version":"detectron2",
+                    "task":task_id
+                    })
+                ray_serve_logger.info(res.content)
                 predictions.append({
                     "result":results,
                     "score": score,
