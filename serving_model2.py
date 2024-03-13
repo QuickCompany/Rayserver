@@ -107,6 +107,39 @@ class Translator:
         avg_score = score_sum / len(results) if score_sum > 0 else 0
         return results, avg_score
 
+    def create_prediction(self, results, task_id, is_prediction_exist, score):
+        if is_prediction_exist:
+            res = requests.put(self.labelstudio_api_url, headers=self.headers, json={
+                "result": results,
+                "score": score,
+                "model_version": "detectron2",
+                "task": task_id
+            })
+        else:
+            res = requests.post(self.labelstudio_api_url, headers=self.headers, json={
+                "result": results,
+                "score": score,
+                "model_version": "detectron2",
+                "task": task_id
+            })
+
+        return res
+
+    def process_single_task(self, from_name, to_name, task):
+        task_id = task.get("id")
+        previous_prediction_result = self.get_previous_prediction_result_from_labelstudio(
+            task_id=task_id)
+        is_prediction_exist = True if previous_prediction_result is not None else False
+        data = task.get("data")
+        image_path = data.get("image")
+        image_data = self.get_image_from_s3(image_path)
+        img_width, img_height = image_data.shape[1], image_data.shape[0]
+        layout_predicted = self.model.detect(image_data)
+        ray_serve_logger.info(layout_predicted)
+        results, score = self.formatted_model_results(
+            from_name, to_name, img_height, img_width, layout_predicted)
+        return results, task_id, is_prediction_exist, score
+
     async def __call__(self, request: Request):
         if request.url.path == "/health":
             return {
@@ -203,39 +236,6 @@ class Translator:
 
         else:
             return {"error": "Invalid endpoint"}
-
-    def create_prediction(self, results, task_id, is_prediction_exist, score):
-        if is_prediction_exist:
-            res = requests.put(self.labelstudio_api_url, headers=self.headers, json={
-                "result": results,
-                "score": score,
-                "model_version": "detectron2",
-                "task": task_id
-            })
-        else:
-            res = requests.post(self.labelstudio_api_url, headers=self.headers, json={
-                "result": results,
-                "score": score,
-                "model_version": "detectron2",
-                "task": task_id
-            })
-
-        return res
-
-    def process_single_task(self, from_name, to_name, task):
-        task_id = task.get("id")
-        previous_prediction_result = self.get_previous_prediction_result_from_labelstudio(
-            task_id=task_id)
-        is_prediction_exist = True if previous_prediction_result is not None else False
-        data = task.get("data")
-        image_path = data.get("image")
-        image_data = self.get_image_from_s3(image_path)
-        img_width, img_height = image_data.shape[1], image_data.shape[0]
-        layout_predicted = self.model.detect(image_data)
-        ray_serve_logger.info(layout_predicted)
-        results, score = self.formatted_model_results(
-            from_name, to_name, img_height, img_width, layout_predicted)
-        return results, task_id, is_prediction_exist, score
 
 
 ray.init(address="auto")
