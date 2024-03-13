@@ -166,7 +166,69 @@ class Translator:
                 
                 # Return the result as a dictionary
             ray_serve_logger.info(predictions)
-            return predictions
+            return predictions      
+        elif request.url.path == "/layout":
+            form_data = await request.form()  
+            results = []
+            for field_name, uploaded_file in form_data.items():
+                # Get the binary content of the uploaded file
+                binary_data = await uploaded_file.read()
+
+                image = self.preprocess(binary_data)
+                layout_predicted = self.model.detect(image)
+                layout_predicted.sort(key = lambda layout_predicted:layout_predicted.coordinates[1], inplace=True)
+                co_ordinates = []
+                for block in layout_predicted:
+                    l = [block.type, block.block.x_1 - 30, block.block.y_1,block.block.x_2 + 10, block.block.y_2]
+                    co_ordinates.append(l)
+
+                results.append(co_ordinates)
+            
+            # Return the result as a dictionary
+            return {"layout_result": results}
+        
+        elif request.url.path == "/ocr":
+            form_data = await request.form()  
+            results = {}
+
+            for field_name, uploaded_file in form_data.items():
+  
+                # Get the binary content of the uploaded file
+                binary_data = await uploaded_file.read()
+                image = self.preprocess(binary_data)
+                result = self.ocr.ocr(image, cls=True)
+
+                results[field_name] = result
+
+            return {'result': results}
+        
+        elif request.url.path == "/table_ocr":
+            form_data = await request.form()  
+            results = {}
+            for field_name, uploaded_file in form_data.items():
+                # Get the binary content of the uploaded file
+                binary_data = await uploaded_file.read()
+
+                image = self.preprocess(binary_data)
+                # Perform OCR on the image
+                result = self.table_engine(image)
+                
+                
+                for line in result:
+                    line.pop('img')
+                    if line['type'] == 'table' :
+                        results[field_name] = line
+                    
+                    else:
+                        result = self.table_engine2(image)
+                        for line in result:
+                            line.pop('img')
+                            results[field_name] = line
+                
+            return {'result': results}
+        
+        else:
+            return {"error": "Invalid endpoint"}
 
 ray.init(address="auto")
 # Create and bind the deployment
