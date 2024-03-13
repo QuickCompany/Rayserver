@@ -73,6 +73,30 @@ class Translator:
         np_array = np.frombuffer(image_data, np.uint8)
         image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
         return image
+    def formatted_model_results(self,from_name,to_name,img_height,img_width,layout_predicted_results):
+        results = list()
+        score_sum = 0
+        for block in layout_predicted_results:
+            ray_serve_logger.info(block)
+            l = [block.type, block.block.x_1 - 30, block.block.y_1,block.block.x_2 + 10, block.block.y_2]
+            _,x,y,xmax,ymax = l
+            output_label = block.type
+            score_sum += block.score
+            results.append({
+            'from_name': from_name,
+            'to_name': to_name,
+            'type': 'rectanglelabels',
+            'value': {
+                'rectanglelabels': [output_label],
+                'x': float(x) / img_width * 100,
+                'y': float(y) / img_height * 100,
+                'width': (float(xmax) - float(x)) / img_width * 100,
+                'height': (float(ymax) - float(y)) / img_height * 100,
+            },
+            'score': block.score,
+            })
+        avg_score = score_sum / len(results) if score_sum > 0 else 0
+        return results,avg_score
     async def __call__(self, request:Request):
         if request.url.path == "/health":
             return {
@@ -108,28 +132,7 @@ class Translator:
                 img_width, img_height = image_data.shape[1], image_data.shape[0]
                 layout_predicted = self.model.detect(image_data)
                 ray_serve_logger.info(layout_predicted)
-                results = list()
-                
-                for block in layout_predicted:
-                    ray_serve_logger.info(block)
-                    l = [block.type, block.block.x_1 - 30, block.block.y_1,block.block.x_2 + 10, block.block.y_2]
-                    _,x,y,xmax,ymax = l
-                    output_label = block.type
-                    score = block.score
-                    results.append({
-                    'from_name': from_name,
-                    'to_name': to_name,
-                    'type': 'rectanglelabels',
-                    'value': {
-                        'rectanglelabels': [output_label],
-                        'x': float(x) / img_width * 100,
-                        'y': float(y) / img_height * 100,
-                        'width': (float(xmax) - float(x)) / img_width * 100,
-                        'height': (float(ymax) - float(y)) / img_height * 100,
-                    },
-                    'score': score,
-                    })
-                    # ray_serve_logger.info(results)
+                results,score = self.formatted_model_results(from_name,to_name,img_height,img_width,layout_predicted)
                 if is_prediction_exist:
                    res = requests.put(self.labelstudio_api_url,headers=self.headers,json={
                     "result":results,
@@ -150,21 +153,6 @@ class Translator:
                     "score": score,
                     "model_version":"something"
                     })
-                # for field_name, uploaded_file in form_data.items():
-                #     # Get the binary content of the uploaded file
-                #     binary_data = await uploaded_file.read()
-
-                #     image = self.preprocess(binary_data)
-                #     layout_predicted = self.model.detect(image)
-                #     layout_predicted.sort(key = lambda layout_predicted:layout_predicted.coordinates[1], inplace=True)
-                #     co_ordinates = []
-                #     for block in layout_predicted:
-                #         l = [block.type, block.block.x_1 - 30, block.block.y_1,block.block.x_2 + 10, block.block.y_2]
-                #         co_ordinates.append(l)
-
-                #     results.append(co_ordinates)
-                
-                # Return the result as a dictionary
             ray_serve_logger.info(predictions)
             return predictions      
         elif request.url.path == "/layout":
