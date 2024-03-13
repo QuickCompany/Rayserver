@@ -1,24 +1,21 @@
-from starlette.requests import Request
 import os
+import cv2
 import ray
 import boto3
 import logging
-from ray import serve
-import layoutparser as lp
-from typing import Dict
 import requests
 import numpy as np
-from flask import jsonify
-import cv2
+import layoutparser as lp
+from ray import serve
+from dotenv import load_dotenv
+from starlette.requests import Request
 from paddleocr import PaddleOCR, PPStructure
 from label_studio_sdk.utils import parse_config
-from dotenv import load_dotenv
-
 
 ray_serve_logger = logging.getLogger("ray.serve")
 
 
-@serve.deployment(route_prefix="/", num_replicas=1, ray_actor_options={"num_cpus": 2, 'num_gpus': 1})
+@serve.deployment(route_prefix="/", num_replicas=1, ray_actor_options={"num_cpus": 2, 'num_gpus': 1}, name="mynewapp")
 class Translator:
     def __init__(self):
         load_dotenv("/root/rayserver/.env")
