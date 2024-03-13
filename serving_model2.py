@@ -14,22 +14,22 @@ from paddleocr import PaddleOCR , PPStructure
 from label_studio_sdk.utils import parse_config
 from dotenv import load_dotenv
 
-# load_dotenv("/root/rayserver/.env")
-
-
 
 ray_serve_logger = logging.getLogger("ray.serve")
 @serve.deployment(route_prefix="/",num_replicas=1, ray_actor_options={"num_cpus": 2 ,'num_gpus':1})
 class Translator:
     def __init__(self):
+        load_dotenv("/root/rayserver/.env")
         model_path = "/root/layout_parsing/finetuned-model/model_final.pth"
         config_path = "/root/layout_parsing/config.yml"
-        hostname = "blr1.vultrobjects.com"
-        secret_key = "dfdfsfsdfsdfsdf"
-        access_key = "xdfdfdfdfdf"
-        self.labelstudio_api_url = "https://labelstudio.io/api/predictions/"
+        hostname = os.getenv("HOST_URL")
+        secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
+        access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
+        labelstudio_access_token = os.getenv("LABELSTUDIO_API_TOKEN")
+        self.labelstudio_api_url = os.getenv("LABELSTUDIO_API_URL")
+        self.images_bucket = os.getenv("IMAGES_BUCKET")
         self.headers = {
-                    "Authorization":"Token fdfdf",
+                    "Authorization":f"Token {labelstudio_access_token}",
                 }
         session = boto3.session.Session()
         self.client = session.client('s3', **{
@@ -68,7 +68,7 @@ class Translator:
     def get_image_from_s3(self,image_path):
         ray_serve_logger.info(image_path)
         image_name = os.path.basename(image_path)
-        response = self.client.get_object(Bucket="labelstudio-patent-images",Key=image_name)
+        response = self.client.get_object(Bucket=self.images_bucket,Key=image_name)
         image_data = response['Body'].read()
         np_array = np.frombuffer(image_data, np.uint8)
         image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
@@ -99,6 +99,9 @@ class Translator:
             for task in tasks:
                 ray_serve_logger.info(task)
                 task_id = task.get("id")
+                previous_prediction_result = self.get_previous_prediction_result_from_labelstudio(task_id=task_id)
+                ray_serve_logger.info(previous_prediction_result)
+                is_prediction_exist = True  if previous_prediction_result is not None else False
                 data = task.get("data")
                 image_path = data.get("image")
                 image_data = self.get_image_from_s3(image_path)
@@ -127,7 +130,6 @@ class Translator:
                     'score': score,
                     })
                     # ray_serve_logger.info(results)
-                is_prediction_exist = True if self.get_previous_prediction_result_from_labelstudio(task_id=task_id) is not None else False
                 if is_prediction_exist:
                    res = requests.put(self.labelstudio_api_url,headers=self.headers,json={
                     "result":results,
