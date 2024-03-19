@@ -122,51 +122,51 @@ def main(pdf_url, folder_name):
     """
     file.write(table_style)
     
-    # with ThreadPoolExecutor() as executor:
-    #     for i, image in enumerate(images):
-    #         result_boxes = layout_analysis(image)['layout_result'][0]
-    #         # print(result_boxes)
-    #         cropped_images = crop_boxes_on_image(image, result_boxes)
-    #         for idx, (label, cropped_image) in enumerate(cropped_images):
-    #             enhanced_cropped_image = enhance_image(cropped_image)
-    #             img_buffer = io.BytesIO()
-    #             enhanced_cropped_image.convert('RGB').save(img_buffer, format='JPEG')
-    #             img_bytes = img_buffer.getvalue()
+    with ThreadPoolExecutor() as executor:
+        for i, image in enumerate(images):
+            result_boxes = layout_analysis(image)['layout_result'][0]
+            # print(result_boxes)
+            cropped_images = crop_boxes_on_image(image, result_boxes)
+            for idx, (label, cropped_image) in enumerate(cropped_images):
+                enhanced_cropped_image = enhance_image(cropped_image)
+                img_buffer = io.BytesIO()
+                enhanced_cropped_image.convert('RGB').save(img_buffer, format='JPEG')
+                img_bytes = img_buffer.getvalue()
 
-    #             if label.lower() == 'figure' or label.lower() == 'formula':
-    #                 base64_data = base64.b64encode(img_bytes).decode('utf-8')
-    #                 html_code = f'<img src="data:image/jpeg;base64,{base64_data}" alt="Image"/>'
-    #                 file.write(html_code)
+                if label.lower() == 'figure' or label.lower() == 'formula':
+                    base64_data = base64.b64encode(img_bytes).decode('utf-8')
+                    html_code = f'<img src="data:image/jpeg;base64,{base64_data}" alt="Image"/>'
+                    file.write(html_code)
                 
-    #             elif label.lower() == 'table':
-    #                 url = 'http://45.76.165.126:8000/table_ocr'
-    #                 image_data = {'data': ('image.jpg', img_bytes),
-    #                               'type': label.lower()}
-    #                 response = requests.post(url, files=image_data)
-    #                 ocr_results = json.loads(response.text)['result']
-    #                 if ocr_results:
-    #                     file.write(ocr_results[0]['res']['html'])
+                elif label.lower() == 'table':
+                    url = 'http://45.76.165.126:8000/table_ocr'
+                    image_data = {'data': ('image.jpg', img_bytes),
+                                  'type': label.lower()}
+                    response = requests.post(url, files=image_data)
+                    ocr_results = json.loads(response.text)['result']
+                    if ocr_results:
+                        file.write(ocr_results[0]['res']['html'])
     
-    #             elif label.lower() != 'extra' and label.lower() != 'list':
-    #                 result_html = ocr_processing(img_bytes, label)
-    #                 file.write(result_html)
-    #                 print("pass")
+                elif label.lower() != 'extra' and label.lower() != 'list':
+                    result_html = ocr_processing(img_bytes, label)
+                    file.write(result_html)
+                    print("pass")
 
-    for i, image in enumerate(images):
-        result_boxes = layout_analysis(image)['layout_result'][0]
+    # for i, image in enumerate(images):
+    #     result_boxes = layout_analysis(image)['layout_result'][0]
 
-        draw_boxes_on_image(image, result_boxes)
-        # cropped_images = crop_boxes_on_image(image, result_boxes)
-        # for idx, (label, cropped_image) in enumerate(cropped_images):
-        #     enhanced_cropped_image = enhance_image(cropped_image)
-        #     if label.lower() != 'extra':
-        #         output_dir = f'./cropped_images/page_{i}/'
-        #         os.makedirs(output_dir, exist_ok=True)
-        #         output_path = os.path.join(output_dir, f"cropped_{idx}.jpg")
-        #         enhanced_cropped_image.save(output_path)
+    #     # draw_boxes_on_image(image, result_boxes)
+    #     cropped_images = crop_boxes_on_image(image, result_boxes)
+    #     for idx, (label, cropped_image) in enumerate(cropped_images):
+    #         enhanced_cropped_image = enhance_image(cropped_image)
+    #         if label.lower() != 'extra':
+    #             output_dir = f'./cropped_images/page_{i}/'
+    #             os.makedirs(output_dir, exist_ok=True)
+    #             output_path = os.path.join(output_dir, f"cropped_{idx}.jpg")
+    #             enhanced_cropped_image.save(output_path)
 
-        output_image_path = f"./test/{folder_name}/modified_image_{i}.jpg"
-        image.save(output_image_path)
+    #     output_image_path = f"./test/{folder_name}/modified_image_{i}.jpg"
+    #     image.save(output_image_path)
     
     end_time = datetime.datetime.now()
     elapsed_time = end_time - start_time

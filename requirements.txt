@@ -6,5 +6,5 @@ layoutparser==0.3.4
 paddlepaddle
 paddleocr>=2.0.1
 PyMuPDF==1.21.1
-'git+https://github.com/facebookresearch/detectron2.git'
+# 'git+https://github.com/facebookresearch/detectron2.git'
 python-multipart
