@@ -2,6 +2,7 @@ import io
 import re
 import cv2
 import os
+import boto3
 import time
 import requests
 import numpy as np
@@ -12,6 +13,9 @@ from paddleocr import PaddleOCR,PPStructure
 from enum import Enum
 from PIL import Image
 from uuid import uuid4
+from dotenv import load_dotenv
+from urllib.parse import quote_plus
+
 
 class Label(str,Enum):
     EXTRA = "extra"
@@ -22,7 +26,26 @@ class Label(str,Enum):
     LIST = "list"
     FIGURE = "figure"
 
-
+class VultrImageUploader(object):
+    def __init__(self) -> None:
+        load_dotenv("/root/rayserver/.env")
+        hostname = os.getenv("HOST_URL")
+        secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
+        access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
+        self.figures_bucket = os.getenv("FIGURES_BUCKET")
+        session = boto3.session.Session()
+        self.client = session.client('s3', **{
+            "region_name": hostname.split('.')[0],
+            "endpoint_url": "https://" + hostname,
+            "aws_access_key_id": access_key,
+            "aws_secret_access_key": secret_key
+        })
+    
+    def upload_image(self,image:bytes):
+        image_name = f"{str(uuid4())}.jpg"
+        self.client.upload_fileobj(io.BytesIO(image),self.figures_bucket,image_name)
+        image_url = f"https://{self.figures_bucket}.{os.getenv('HOST_URL')}/{image_name}"
+        return image_url
 class LayOutInference(object):
     def __init__(self,model_path:str,config_path:str,extra_config:List,label_map: Dict[int,str]) -> None:
         self.model = lp.Detectron2LayoutModel(config_path, model_path,
