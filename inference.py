@@ -28,23 +28,23 @@ class Label(str,Enum):
 
 class VultrImageUploader(object):
     def __init__(self) -> None:
-        load_dotenv("/root/rayserver/.env")
-        hostname = os.getenv("HOST_URL")
+        load_dotenv("/home/debo/Rayserver/.env")
+        self.hostname = os.getenv("HOST_URL")
         secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
         access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
         self.figures_bucket = os.getenv("FIGURES_BUCKET")
         session = boto3.session.Session()
         self.client = session.client('s3', **{
-            "region_name": hostname.split('.')[0],
-            "endpoint_url": "https://" + hostname,
+            "region_name": self.hostname.split('.')[0],
+            "endpoint_url": "https://" + self.hostname,
             "aws_access_key_id": access_key,
             "aws_secret_access_key": secret_key
         })
     
     def upload_image(self,image:bytes):
         image_name = f"{str(uuid4())}.jpg"
-        self.client.upload_fileobj(io.BytesIO(image),self.figures_bucket,image_name)
-        image_url = f"https://{self.figures_bucket}.{os.getenv('HOST_URL')}/{image_name}"
+        self.client.upload_fileobj(io.BytesIO(image),self.figures_bucket,image_name, ExtraArgs={'ACL':'public-read'})
+        image_url = f"https://{self.hostname}/.{self.figures_bucket}/{image_name}"
         return image_url
 class LayOutInference(object):
     def __init__(self,model_path:str,config_path:str,extra_config:List,label_map: Dict[int,str]) -> None:
@@ -54,7 +54,7 @@ class LayOutInference(object):
         self.ocr = PaddleOCR(use_angle_cls=True, lang='en')  # Specify the languages you want to support
         
         self.table_engine = PPStructure(lang='en',show_log=True , ocr=True)
-        self.table_engine2 = PPStructure(lang='en',layout=False)
+        self.vultr_img_uploader = VultrImageUploader()
         
     def do_inference(self,pdf_link):
         t1 = time.perf_counter()
@@ -73,10 +73,13 @@ class LayOutInference(object):
                     html_code += f"\n<p>{text}</p>"
                 elif block.type == Label.FORMULA.value:
                     print(Label.FORMULA)
-                    html_code += f"\n<a src="">formula</a>"
+                    url = self.vultr_img_uploader.upload_image(np.array(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))).tobytes())
+                    html_code += f"\n<img src=\"{url}\">"
                 elif block.type == Label.TABLE.value:
                     print(Label.TABLE)
-                    html_code += f"\n<h3>table</h3>"
+                    result = self.table_engine(np.array(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+                    print(result)
+                    html_code += f"\n<h3>{result}</h3>"
                 elif block.type == Label.LIST.value:
                     ocr_results = self.extract_text(page, block)
                     text = self.extract_text_from_paddocr_output(ocr_results)
@@ -133,3 +136,4 @@ if __name__ == "__main__":
     print(result)
     with open("report.html","w+") as f:
         f.write(result)
+    
