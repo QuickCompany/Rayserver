@@ -37,6 +37,7 @@ class LayOutInference(object):
         t1 = time.perf_counter()
         pdf = requests.get(pdf_link).content
         pages = convert_from_bytes(pdf)
+        html_code = """"""
         for count,page in enumerate(pages):
             layout_predicted = self.model.detect(page)
             for block in layout_predicted._blocks:
@@ -46,24 +47,31 @@ class LayOutInference(object):
                     ocr_results = self.extract_text(page, block)
                     text = self.extract_text_from_paddocr_output(ocr_results)
                     print(text)
+                    html_code += f"\n<p>{text}</p>"
                 elif block.type == Label.FORMULA.value:
                     print(Label.FORMULA)
+                    html_code += f"\n<a src="">formula</a>"
                 elif block.type == Label.TABLE.value:
                     print(Label.TABLE)
+                    html_code += f"\n<h3>table</h3>"
                 elif block.type == Label.LIST.value:
                     ocr_results = self.extract_text(page, block)
                     text = self.extract_text_from_paddocr_output(ocr_results)
                     print(text)
+                    html_code += f"\n<ul>{text}</ul>"
                 elif block.type == Label.TITLE.value:
                     print(Label.TITLE)
                     ocr_results = self.extract_text(page, block)
                     text = self.extract_text_from_paddocr_output(ocr_results)
                     print(text)
+                    html_code += f"\n<h3>{text}</h3>"
                 elif block.type == Label.FIGURE.value:
                     print(Label.FIGURE)
+                    html_code += f"\n<img src="">image</img>"
                 
         end_time = time.perf_counter() - t1
         print(f"time taken: {end_time}")
+        return html_code
 
     def extract_text(self, page, block):
         cropped_img = page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
@@ -88,7 +96,6 @@ class LayOutInference(object):
                 _,text_arr = inner
                 in_text,conf = text_arr
                 text += in_text
-
         return text.strip()
 
 if __name__ == "__main__":
@@ -101,3 +108,5 @@ if __name__ == "__main__":
 
     result = model.do_inference('https://blr1.vultrobjects.com/patents/document/164459125/azure_file/287d166a5c3292e4e904b19a0120e5c5.pdf')
     print(result)
+    with open("report.html","w+") as f:
+        f.write(result)
