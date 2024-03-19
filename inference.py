@@ -1,4 +1,5 @@
 import io
+import re
 import cv2
 import os
 import time
@@ -40,34 +41,55 @@ class LayOutInference(object):
             layout_predicted = self.model.detect(page)
             for block in layout_predicted._blocks:
                 if block.type == Label.EXTRA.value:
-                    print(Label.EXTRA)
-                    print(f"skipped")
-
+                    pass
                 elif block.type == Label.TEXT.value:
-                    print(Label.TEXT)
-                    cropped_img = page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
-                    cropped_img.save(f"{str(uuid4())}.jpg")
-                    if cropped_img:
-                        img_array = np.array(cropped_img)
-                        img_array = img_array[:, :, ::-1]  # Rearrange color channels for RGB if needed
-                        ocr_results = self.ocr.ocr(img_array)
-                        for result in ocr_results:
-                            print(result)
+                    ocr_results = self.extract_text(page, block)
+                    text = self.extract_text_from_paddocr_output(ocr_results)
+                    print(text)
                 elif block.type == Label.FORMULA.value:
                     print(Label.FORMULA)
                 elif block.type == Label.TABLE.value:
                     print(Label.TABLE)
                 elif block.type == Label.LIST.value:
-                    print(Label.LIST)
+                    ocr_results = self.extract_text(page, block)
+                    text = self.extract_text_from_paddocr_output(ocr_results)
+                    print(text)
                 elif block.type == Label.TITLE.value:
                     print(Label.TITLE)
+                    ocr_results = self.extract_text(page, block)
+                    text = self.extract_text_from_paddocr_output(ocr_results)
+                    print(text)
                 elif block.type == Label.FIGURE.value:
                     print(Label.FIGURE)
                 
         end_time = time.perf_counter() - t1
         print(f"time taken: {end_time}")
 
+    def extract_text(self, page, block):
+        cropped_img = page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
+        img_array = np.array(cropped_img)
+        img_array = img_array[:, :, ::-1]  # Rearrange color channels for RGB if needed
+        ocr_results = self.ocr.ocr(img_array)
+        return ocr_results
+    def extract_text_from_paddocr_output(self,output):
+        """
+        This function extracts text from the specific format of paddleocr output.
 
+        Args:
+            output: A list of lists containing bounding boxes and recognized text with confidence scores.
+
+        Returns:
+            A string containing the combined recognized text.
+        """
+        text = ""
+        for block in output:
+            # Extract coordinates and text from the block
+            for inner in block:
+                _,text_arr = inner
+                in_text,conf = text_arr
+                text += in_text
+
+        return text.strip()
 
 if __name__ == "__main__":
     model_path = '/home/debo/Rayserver/model/model_final.pth'
