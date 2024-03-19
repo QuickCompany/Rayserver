@@ -132,7 +132,7 @@ if __name__ == "__main__":
                     4:"table" , 5: "figure" , 6:"list"}
     model = LayOutInference(model_path,config_path,extra_config,label_map)
 
-    result = model.do_inference('https://blr1.vultrobjects.com/patents/document/164459125/azure_file/287d166a5c3292e4e904b19a0120e5c5.pdf')
+    result = model.do_inference('https://blr1.vultrobjects.com/patents/document/184426534/azure_file/b4c7d47cdeffcf2cc6f0873879527f80.pdf')
     print(result)
     with open("report.html","w+") as f:
         f.write(result)
