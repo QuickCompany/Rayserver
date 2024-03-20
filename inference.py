@@ -104,8 +104,8 @@ class LayOutInference(object):
                     print(text)
                     html_code += f"\n<h3>{text}</h3>"
                 elif block.type == Label.FIGURE.value:
-                    print(Label.FIGURE)
-                    html_code += f"\n<img src="">image</img>"
+                    url = self.vultr_img_uploader.upload_image(np.array(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))).tobytes())
+                    html_code += f"<img src=\"{url}\">"
                 
         end_time = time.perf_counter() - t1
         print(f"time taken: {end_time}")
