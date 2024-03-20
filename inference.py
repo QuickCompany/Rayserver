@@ -4,21 +4,24 @@ import cv2
 import os
 import boto3
 import time
+import json
 import requests
 import numpy as np
 import layoutparser as lp
-from pdf2image import convert_from_path,convert_from_bytes
-from typing import Dict,List,Tuple,Optional
-from paddleocr import PaddleOCR,PPStructure
+from pdf2image import convert_from_path, convert_from_bytes
+from typing import Dict, List, Tuple, Optional
+from paddleocr import PaddleOCR, PPStructure
 from enum import Enum
 from PIL import Image
 from uuid import uuid4
 from dotenv import load_dotenv
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
+from ray import serve
+from starlette.requests import Request
 
 
-class Label(str,Enum):
+class Label(str, Enum):
     EXTRA = "extra"
     TITLE = "title"
     TEXT = "text"
@@ -26,6 +29,7 @@ class Label(str,Enum):
     TABLE = "table"
     LIST = "list"
     FIGURE = "figure"
+
 
 class VultrImageUploader(object):
     def __init__(self) -> None:
@@ -154,16 +158,51 @@ class LayOutInference(object):
                 text += in_text
         return text.strip()
 
-if __name__ == "__main__":
-    model_path = '/home/debo/Rayserver/model/model_final.pth'
-    config_path = '/home/debo/Rayserver/model/config.yaml'
-    extra_config=["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.8,]
-    label_map={0: "extra", 1: "title", 2: "text", 3:"formula",
-                    4:"table" , 5: "figure" , 6:"list"}
-    model = LayOutInference(model_path,config_path,extra_config,label_map)
 
-    result = model.do_inference('https://blr1.vultrobjects.com/patents/document/184426534/azure_file/b4c7d47cdeffcf2cc6f0873879527f80.pdf')
-    print(result)
-    with open("report.html","w+") as f:
-        f.write(result)
+@serve.deployment
+class LayoutParserDeployment:
+    def __init__(self) -> None:
+        model_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/model_final.pth'
+        config_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/config.yaml'
+        extra_config = ["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.8,]
+        label_map = {0: "extra", 1: "title", 2: "text", 3: "formula",
+                        4: "table", 5: "figure", 6: "list"}
+        self.model = LayOutInference(model_path, config_path, extra_config, label_map)
     
+    def post_to_rails(self,slug_id,result):
+        pass
+    async def __call__(self, request:Request ):
+        if request.url.path == "/layoutprocess":
+            json_data = await request.body()
+            json_data = json.loads(json_data.decode())
+            links = json_data.get("links")
+            result = list()
+            for link in links:
+                html_code = self.model.do_inference(link)
+                result.append(html_code)
+            return result
+        else:
+            return {
+                "img":"save details"
+            }
+
+
+app = LayoutParserDeployment.bind()
+serve.run(app,host="0.0.0.0")
+# if __name__ == "__main__":
+    # model_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/model_final.pth'
+    # config_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/config.yaml'
+    # extra_config = ["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.8,]
+    # label_map = {0: "extra", 1: "title", 2: "text", 3: "formula",
+    #                 4: "table", 5: "figure", 6: "list"}
+    # model = LayOutInference(model_path, config_path, extra_config, label_map)
+
+    # result = model.do_inference(
+    #     'https://blr1.vultrobjects.com/patents/document/184426534/azure_file/b4c7d47cdeffcf2cc6f0873879527f80.pdf')
+    # print(result)
+    # with open("report.html", "w") as f:
+    #     f.write(result)
+    
+
+    # 2: Deploy the application locally.
+    # serve.run(app,host="0.0.0.0")
