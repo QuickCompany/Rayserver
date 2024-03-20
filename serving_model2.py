@@ -15,7 +15,7 @@ from label_studio_sdk.utils import parse_config
 ray_serve_logger = logging.getLogger("ray.serve")
 
 
-@serve.deployment(route_prefix="/", num_replicas=1, ray_actor_options={"num_cpus": 2, 'num_gpus': 1}, name="mynewapp")
+@serve.deployment(route_prefix="/", num_replicas=1, ray_actor_options={"num_cpus": 1, 'num_gpus': 0.5})
 class Translator:
     def __init__(self):
         load_dotenv("/root/rayserver/.env")
@@ -71,8 +71,14 @@ class Translator:
     def get_image_from_s3(self, image_path):
         ray_serve_logger.info(image_path)
         image_name = os.path.basename(image_path)
-        response = self.client.get_object(
-            Bucket=self.images_bucket, Key=image_name)
+        bucket_name = image_path.split("//")[1].split("/")[0]
+
+        if bucket_name != self.images_bucket:
+            response = self.client.get_object(
+            Bucket=bucket_name, Key=image_name)
+        else:
+            response = self.client.get_object(
+                Bucket=self.images_bucket, Key=image_name)
         image_data = response['Body'].read()
         np_array = np.frombuffer(image_data, np.uint8)
         image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
@@ -238,5 +244,4 @@ class Translator:
 ray.init(address="auto")
 # Create and bind the deployment
 translator_app = Translator.bind()
-
 serve.run(target=translator_app, host='0.0.0.0', port=8000)
