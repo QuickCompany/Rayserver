@@ -15,6 +15,7 @@ from PIL import Image
 from uuid import uuid4
 from dotenv import load_dotenv
 from urllib.parse import quote_plus
+from bs4 import BeautifulSoup
 
 
 class Label(str,Enum):
@@ -55,7 +56,16 @@ class LayOutInference(object):
         
         self.table_engine = PPStructure(lang='en',show_log=True , ocr=True)
         self.vultr_img_uploader = VultrImageUploader()
-        
+    
+    def remove_html_body_tags(self,html_string):
+        soup = BeautifulSoup(html_string, 'html.parser')
+        # Remove <html> and <body> tags
+        if soup.html:
+            soup.html.unwrap()
+        if soup.body:
+            soup.body.unwrap()
+        return str(soup)
+
     def do_inference(self,pdf_link):
         t1 = time.perf_counter()
         pdf = requests.get(pdf_link).content
@@ -76,10 +86,12 @@ class LayOutInference(object):
                     url = self.vultr_img_uploader.upload_image(np.array(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))).tobytes())
                     html_code += f"\n<img src=\"{url}\">"
                 elif block.type == Label.TABLE.value:
-                    print(Label.TABLE)
-                    result = self.table_engine(np.array(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
-                    print(result)
-                    html_code += f"\n<h3>{result}</h3>"
+                    results = self.table_engine(np.array(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+                    for table in results:
+                        table_html = table['res']['html']
+                        preprocessed_table_html = self.remove_html_body_tags(table_html)
+                        print(preprocessed_table_html)
+                        html_code += f"{preprocessed_table_html}"
                 elif block.type == Label.LIST.value:
                     ocr_results = self.extract_text(page, block)
                     text = self.extract_text_from_paddocr_output(ocr_results)
