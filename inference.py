@@ -8,12 +8,14 @@ import json
 import requests
 import numpy as np
 import layoutparser as lp
-from pdf2image import convert_from_bytes
-from typing import Dict, List
+from pdf2image import convert_from_path, convert_from_bytes
+from typing import Dict, List, Tuple, Optional
 from paddleocr import PaddleOCR, PPStructure
 from enum import Enum
+from PIL import Image
 from uuid import uuid4
 from dotenv import load_dotenv
+from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 from ray import serve
 from starlette.requests import Request
@@ -157,7 +159,7 @@ class LayOutInference(object):
         return text.strip()
 
 
-@serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 2, 'num_gpus': 0.5})
+@serve.deployment(num_replicas=1,ray_actor_options={"num_cpus": 2, 'num_gpus': 0.5})
 class LayoutParserDeployment:
     def __init__(self) -> None:
         model_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/model_final.pth'
@@ -165,42 +167,47 @@ class LayoutParserDeployment:
         extra_config = ["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.8,]
         label_map = {0: "extra", 1: "title", 2: "text", 3: "formula",
                         4: "table", 5: "figure", 6: "list"}
-        self.model = LayOutInference(
-            model_path, config_path, extra_config, label_map)
-
-    async def __call__(self, request: Request):
-        if request.url.path == "/v1/layoutprocess":
+        self.model = LayOutInference(model_path, config_path, extra_config, label_map)
+    
+    async def __call__(self, request:Request ):
+        if request.url.path == "/v1/patents":
             json_data = await request.body()
             json_data = json.loads(json_data.decode())
-            links = json_data.get("links")
+            patents = json_data.get("patents")
             result = list()
-            for link in links:
+            for patent in patents:
+                slug = patent.get("slug")
+                link = patent.get("link")
                 html_code = self.model.do_inference(link)
-                result.append(html_code)
+                result.append(
+                    {
+                        "slug":slug,
+                        "prediction":html_code
+                    })
             return result
         else:
             return {
-                "img": "save details"
+                "img":"save details"
             }
 
 
 app: serve.Application = LayoutParserDeployment.bind()
-serve.run(name="newapp", target=app,
-          route_prefix="/v1", host="0.0.0.0", port=8000)
+serve.run(name="newapp",target=app,route_prefix="/v1",host="0.0.0.0",port=8000)
 
 # if __name__ == "__main__":
-# model_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/model_final.pth'
-# config_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/config.yaml'
-# extra_config = ["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.8,]
-# label_map = {0: "extra", 1: "title", 2: "text", 3: "formula",
-#                 4: "table", 5: "figure", 6: "list"}
-# model = LayOutInference(model_path, config_path, extra_config, label_map)
+    # model_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/model_final.pth'
+    # config_path = '/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/config.yaml'
+    # extra_config = ["MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.8,]
+    # label_map = {0: "extra", 1: "title", 2: "text", 3: "formula",
+    #                 4: "table", 5: "figure", 6: "list"}
+    # model = LayOutInference(model_path, config_path, extra_config, label_map)
 
-# result = model.do_inference(
-#     'https://blr1.vultrobjects.com/patents/document/184426534/azure_file/b4c7d47cdeffcf2cc6f0873879527f80.pdf')
-# print(result)
-# with open("report.html", "w") as f:
-#     f.write(result)
+    # result = model.do_inference(
+    #     'https://blr1.vultrobjects.com/patents/document/184426534/azure_file/b4c7d47cdeffcf2cc6f0873879527f80.pdf')
+    # print(result)
+    # with open("report.html", "w") as f:
+    #     f.write(result)
+    
 
-# 2: Deploy the application locally.
-# serve.run(app,host="0.0.0.0")
+    # 2: Deploy the application locally.
+    # serve.run(app,host="0.0.0.0")
