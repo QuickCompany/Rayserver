@@ -1,13 +1,16 @@
 import io
 import re
 import cv2
+import ray
 import os
 import boto3
 import time
 import json
 import requests
 import numpy as np
+import logging
 import layoutparser as lp
+import threading
 from pdf2image import convert_from_path, convert_from_bytes
 from typing import Dict, List, Tuple, Optional
 from paddleocr import PaddleOCR, PPStructure
@@ -20,6 +23,8 @@ from bs4 import BeautifulSoup
 from ray import serve
 from starlette.requests import Request
 
+
+ray_serve_logger = logging.getLogger("ray.serve")
 
 class Label(str, Enum):
     EXTRA = "extra"
@@ -85,50 +90,76 @@ class LayOutInference(object):
         t1 = time.perf_counter()
         pdf = requests.get(pdf_link).content
         pages = convert_from_bytes(pdf)
+        html_code_dict = dict()
         html_code = """"""
+        results = []
         for count, page in enumerate(pages):
             layout_predicted = self.model.detect(page)
-            for block in layout_predicted._blocks:
-                if block.type == Label.EXTRA.value:
-                    pass
-                elif block.type == Label.TEXT.value:
-                    ocr_results = self.extract_text(page, block)
-                    text = self.extract_text_from_paddocr_output(ocr_results)
-                    print(text)
-                    html_code += f"\n<p>{text}</p>"
-                elif block.type == Label.FORMULA.value:
-                    print(Label.FORMULA)
-                    url = self.vultr_img_uploader.upload_image(self.convert_image_to_byte(
-                        page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
-                    html_code += f"\n<img src=\"{url}\">"
-                elif block.type == Label.TABLE.value:
-                    results = self.table_engine(np.array(page.crop(
-                        (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
-                    for table in results:
-                        table_html = table['res']['html']
-                        preprocessed_table_html = self.remove_html_body_tags(
-                            table_html)
-                        print(preprocessed_table_html)
-                        html_code += f"{preprocessed_table_html}"
-                elif block.type == Label.LIST.value:
-                    ocr_results = self.extract_text(page, block)
-                    text = self.extract_text_from_paddocr_output(ocr_results)
-                    print(text)
-                    html_code += f"\n<ul>{text}</ul>"
-                elif block.type == Label.TITLE.value:
-                    print(Label.TITLE)
-                    ocr_results = self.extract_text(page, block)
-                    text = self.extract_text_from_paddocr_output(ocr_results)
-                    print(text)
-                    html_code += f"\n<h3>{text}</h3>"
-                elif block.type == Label.FIGURE.value:
-                    url = self.vultr_img_uploader.upload_image(self.convert_image_to_byte(
-                        page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
-                    html_code += f"<img src=\"{url}\">"
-
+            html_code_dict[count] = self.update_html(html_code, page, layout_predicted)
+        ray_serve_logger.info(html_code_dict)
+        for count,_ in enumerate(pages):
+            html_code += html_code_dict.get(count)
         end_time = time.perf_counter() - t1
         print(f"time taken: {end_time}")
         return html_code
+
+    def update_html(self, html_code, page, layout_predicted):
+        for block in layout_predicted._blocks:
+            if block.type == Label.EXTRA.value:
+                pass
+            elif block.type == Label.TEXT.value:
+                ocr_results = self.extract_text(page, block)
+                text = self.extract_text_from_paddocr_output(ocr_results)
+                print(text)
+                html_code += f"\<p>{text}</p>"
+            elif block.type == Label.FORMULA.value:
+                print(Label.FORMULA)
+                url = self.vultr_img_uploader.upload_image(self.convert_image_to_byte(
+                        page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+                html_code += f"<img src=\"{url}\">"
+            elif block.type == Label.TABLE.value:
+                results = self.table_engine(np.array(page.crop(
+                        (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+                for table in results:
+                    table_html = table['res']['html']
+                    preprocessed_table_html = self.remove_html_body_tags(
+                            table_html)
+                    print(preprocessed_table_html)
+                    html_code += f"{preprocessed_table_html}"
+            elif block.type == Label.LIST.value:
+                ocr_results = self.extract_text(page, block)
+                text = self.extract_text_from_paddocr_output(ocr_results)
+                print(text)
+                html_code += f"<ul>{text}</ul>"
+            elif block.type == Label.TITLE.value:
+                print(Label.TITLE)
+                ocr_results = self.extract_text(page, block)
+                text = self.extract_text_from_paddocr_output(ocr_results)
+                print(text)
+                html_code += f"<h3>{text}</h3>"
+            elif block.type == Label.FIGURE.value:
+                url = self.vultr_img_uploader.upload_image(self.convert_image_to_byte(
+                        page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+                html_code += self.create_image_tag(url)
+        return html_code
+    def create_image_tag(self,url):
+        """
+        Creates a properly formatted HTML image tag with escaped quotes and newlines.
+
+        Args:
+            url (str): The URL of the image.
+
+        Returns:
+            str: The formatted HTML image tag.
+        """
+
+        escaped_url = url.replace('"', '\\"')  # Escape double quotes for proper HTML syntax
+        image_tag = f'<img src="{escaped_url}" />'  # Use self-closing tag for cleaner output
+
+        # If you need to preserve newlines, adjust here:
+        # image_tag = f'<img src="{escaped_url}" />\n'
+
+        return image_tag
 
     def extract_text(self, page, block):
         cropped_img = page.crop(
