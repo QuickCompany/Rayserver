@@ -11,6 +11,7 @@ import numpy as np
 import logging
 import layoutparser as lp
 import threading
+import pytesseract
 from pdf2image import convert_from_path, convert_from_bytes
 from typing import Dict, List, Tuple, Optional
 from paddleocr import PaddleOCR, PPStructure
@@ -27,6 +28,111 @@ from ray.util.actor_pool import ActorPool
 
 logger = logging.getLogger("ray.serve")
 
+class Label(str, Enum):
+    EXTRA = "extra"
+    TITLE = "title"
+    TEXT = "text"
+    FORMULA = "formula"
+    TABLE = "table"
+    LIST = "list"
+    FIGURE = "figure"
+
+class VultrImageUploader(object):
+    def __init__(self) -> None:
+        load_dotenv("/root/new_layoutmodel_training/merged_dataset/.env")
+        self.hostname = os.getenv("HOST_URL")
+        secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
+        access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
+        self.figures_bucket = os.getenv("FIGURES_BUCKET")
+        session = boto3.session.Session()
+        self.client = session.client('s3', **{
+            "region_name": self.hostname.split('.')[0],
+            "endpoint_url": "https://" + self.hostname,
+            "aws_access_key_id": access_key,
+            "aws_secret_access_key": secret_key
+        })
+
+    def upload_image(self, image: bytes):
+        image_name = f"{str(uuid4())}.jpg"
+        self.client.upload_fileobj(io.BytesIO(
+            image), self.figures_bucket, image_name, ExtraArgs={'ACL': 'public-read'})
+        image_url = f"https://{self.hostname}/{self.figures_bucket}/{image_name}"
+        return image_url
+
+@ray.remote(num_gpus=0.5,concurrency_groups={"io": 2, "compute": 10})
+class OcrProcessor:
+    def __init__(self) -> None:
+        self.table_engine = PPStructure(lang='en', show_log=True, ocr=True)
+        self.tesseract_path = "/usr/bin/tesseract"
+        pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
+    def convert_image_to_text_tessaract(self,image):
+        t1 = time.perf_counter()
+        process_text = pytesseract.image_to_string(image)
+        t2 = time.perf_counter() - t1
+        logger.info(f"time took to process tesseract is: {t2}")
+        logger.info(process_text)
+        return process_text
+
+    def remove_html_body_tags(self, html_string):
+        soup = BeautifulSoup(html_string, 'html.parser')
+        # Remove <html> and <body> tags
+        if soup.html:
+            soup.html.unwrap()
+        if soup.body:
+            soup.body.unwrap()
+        return str(soup)
+    def process_layout(self,pages,layout):
+        html_string = """"""
+        for page,prediction in zip(pages,layout):
+            html_string += self.update_html(html_string, page, prediction)
+        return html_string
+    
+    def update_html(self, html_code, page, layout_predicted):
+        t1 = time.perf_counter()
+        for block in layout_predicted._blocks:
+            if block.type == Label.EXTRA.value:
+                pass
+            elif block.type == Label.TEXT.value:
+                text = self.convert_image_to_text_tessaract(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
+                # text = self.convert_image_to_text_tessaract_from_paddocr_output(ocr_results)
+                print(text)
+                html_code += f"\<p>{text}</p>"
+            elif block.type == Label.FORMULA.value:
+                pass
+                # print(Label.FORMULA)
+                # url = self.vultr_img_uploader.upload_image(self.convert_image_to_byte(
+                #         page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+                # html_code += f"<img src=\"{url}\">"
+            elif block.type == Label.TABLE.value:
+                # results = self.table_engine(np.array(page.crop(
+                #         (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+                # logger.info(results)
+                # for table in results:
+                #     table_html = table['res']['html']
+                #     preprocessed_table_html = self.remove_html_body_tags(
+                #             table_html)
+                #     print(preprocessed_table_html)
+                #     html_code += f"{preprocessed_table_html}"
+                pass
+            elif block.type == Label.LIST.value:
+                text = self.convert_image_to_text_tessaract(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
+                # text = self.convert_image_to_text_tessaract_from_paddocr_output(ocr_results)
+                print(text)
+                html_code += f"<ul>{text}</ul>"
+            elif block.type == Label.TITLE.value:
+                print(Label.TITLE)
+                text = self.convert_image_to_text_tessaract(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
+                # text = self.convert_image_to_text_tessaract_from_paddocr_output(ocr_results)
+                print(text)
+                html_code += f"<h3>{text}</h3>"
+            elif block.type == Label.FIGURE.value:
+                pass
+                # url = self.vultr_img_uploader.upload_image(self.convert_image_to_byte(
+                #         page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+                # html_code += self.create_image_tag(url)
+        t2 = time.perf_counter() - t1
+        logger.info(f"time taken to genearte html: {t2}")
+        return html_code
 
 @ray.remote(num_gpus=0.5,concurrency_groups={"io": 2, "compute": 10})
 # @ray.remote(num_gpus=1)
@@ -47,26 +153,33 @@ class Layoutinfer:
 
 
 
-@serve.deployment(num_replicas=2)
+@serve.deployment(num_replicas=1)
 class LayoutRequest:
     def __init__(self) -> None:
         self.model = Layoutinfer.remote()
         self.pool = ActorPool([self.model])
+        self.ocr = OcrProcessor.remote()
     async def __call__(self, request:Request):
         if request.url.path == "/patent":
             url_json = await request.json()
             link = url_json.get("link")
             pdf = requests.get(link).content
-            pdf = convert_from_bytes(pdf)
+            pdf = convert_from_bytes(pdf,thread_count=10)
             start_time = time.time()
             cor_1 = list(self.pool.map(lambda a,v: a.detect.remote(v),pdf))
             end_time = time.time()
             elapsed_time = end_time - start_time
-            logger.info(len(cor_1))
+            # logger.info(len(cor_1))
+            start_time = time.time()
+            html_code = ray.get(self.ocr.process_layout.remote(pdf,cor_1))
+            end_time = time.time()
             logger.info("Total time taken:", elapsed_time, "seconds")
+            with open("save.json","w+") as f:
+                f.write(html_code)
             return {
                 "message":"submitted",
-                "time":elapsed_time
+                "time":elapsed_time,
+                "html_time": end_time - start_time
             }
 
 
