@@ -89,7 +89,7 @@ class OcrProcessor:
         return html_string
     
     def update_html(self, html_code, page, layout_predicted):
-        process_pool = ThreadPoolExecutor(max)
+        process_pool = ThreadPoolExecutor(max_workers=len(layout_predicted))
         results = process_pool.map(self.convert_image_to_text_tessaract,[page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)) for block in layout_predicted if block.type not in (Label.TABLE.value,Label.FIGURE.value,Label.FORMULA.value) ])
             # if block.type == Label.TEXT.value:
             #     text = self.convert_image_to_text_tessaract(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
