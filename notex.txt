@@ -1,0 +1,23 @@
+poker plan,points,
+
+arm template,
+/listresources
+/deployresource
+/deleteresource
+
+
+each enviourment: dev,test,uat,prod
+Azure Resource Manager:
+ 
+apis
+ 
+list: /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/resources?api-version=2021-04-01
+ 
+deploy: /subscriptions/{subscriptionId}/resourcegroups/{resourceGroupName}/providers/Microsoft.Resources/deployments/my-deployment?api-version=2021-04-01
+ 
+delete: /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Storage/storageAccounts/{accountName}?api-version=2022-09-01
+ 
+ARM templates
+
+integrated runtime
+databricks

@@ -25,7 +25,8 @@ from ray import serve
 from starlette.requests import Request
 import base64
 from ray.util.actor_pool import ActorPool
-from concurrent.futures import ThreadPoolExecutor
+import easyocr
+from concurrent.futures import ThreadPoolExecutor,ProcessPoolExecutor
 
 
 logger = logging.getLogger("ray.serve")
@@ -41,7 +42,7 @@ class Label(str, Enum):
 
 class VultrImageUploader(object):
     def __init__(self) -> None:
-        load_dotenv("/root/new_layoutmodel_training/merged_dataset/.env")
+        load_dotenv("/home/debo/Rayserver/.env")
         self.hostname = os.getenv("HOST_URL")
         secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
         access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
@@ -65,11 +66,15 @@ class VultrImageUploader(object):
 class OcrProcessor:
     def __init__(self) -> None:
         self.table_engine = PPStructure(lang='en', show_log=True, ocr=True)
+        self.easyocr = easyocr.Reader(["en"])
         self.tesseract_path = "/usr/bin/tesseract"
+        self.custom_config = r'--oem 3 --psm 6 -c tessedit_use_gpu=1'
         pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
     def convert_image_to_text_tessaract(self,image):
         t1 = time.perf_counter()
-        process_text = pytesseract.image_to_string(image)
+
+        # process_text = pytesseract.image_to_string(image,config=self.custom_config)
+        process_text = self.easyocr.readtext(np.array(image),detail=0,paragraph=True)[0]
         t2 = time.perf_counter() - t1
         logger.info(f"time took to process tesseract is: {t2}")
         logger.info(process_text)
@@ -83,13 +88,15 @@ class OcrProcessor:
         if soup.body:
             soup.body.unwrap()
         return str(soup)
-    def process_layout(self,page,layout):
+    def process_layout(self,req: Tuple):
+        page,layout = req
         html_string = """"""
         html_string += self.update_html(html_string, page, layout)
         return html_string
     
     def update_html(self, html_code, page, layout_predicted):
-        process_pool = ThreadPoolExecutor(max_workers=len(layout_predicted))
+        process_pool = ThreadPoolExecutor(max_workers=2)
+        # process_pool = ProcessPoolExecutor(max_workers=len(layout_predicted) if len(layout_predicted) <= os.cpu_count() - 3 else 5)
         results = process_pool.map(self.convert_image_to_text_tessaract,[page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)) for block in layout_predicted if block.type not in (Label.TABLE.value,Label.FIGURE.value,Label.FORMULA.value) ])
             # if block.type == Label.TEXT.value:
             #     text = self.convert_image_to_text_tessaract(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
@@ -141,8 +148,8 @@ class OcrProcessor:
 # @ray.remote(num_gpus=1)
 class Layoutinfer:
     def __init__(self) -> None:
-        model_path: str="/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/model_final.pth"
-        config_path: str="/root/new_layoutmodel_training/merged_dataset/finetuned-model-18th-march/config.yaml"
+        model_path: str="/home/debo/Rayserver/model/model_final.pth"
+        config_path: str="/home/debo/Rayserver/model/config.yaml"
         extra_config: List=[]
         label_map: Dict[int, str]={0: "extra", 1: "title", 2: "text", 3: "formula",
                     4: "table", 5: "figure", 6: "list"}
@@ -162,6 +169,7 @@ class LayoutRequest:
         self.model = Layoutinfer.remote()
         self.pool = ActorPool([self.model])
         self.ocr = OcrProcessor.remote()
+        self.ocr_pool = ActorPool([self.ocr])
     async def __call__(self, request:Request):
         if request.url.path == "/patent":
             url_json = await request.json()
@@ -174,15 +182,21 @@ class LayoutRequest:
             elapsed_time = end_time - start_time
             # logger.info(len(cor_1))
             start_time = time.time()
-            html_code = ray.get([self.ocr.process_layout.remote(page,layout) for page,layout in zip(pdf,cor_1)])
+            # html_code = ray.get([self.ocr.process_layout.remote(page,layout) for page,layout in zip(pdf,cor_1)])
+            html_code = list(self.ocr_pool.map(lambda a,v: a.process_layout.remote(v),list(zip(pdf,cor_1))))
             end_time = time.time()
             logger.info("Total time taken:", elapsed_time, "seconds")
-            # with open("save.json","w+") as f:
-            #     f.write(json.dumps(html_code))
+            html_time = end_time - start_time
+            start_time = time.time()
+            results = [i for i in html_code]
+            end_time = time.time()
+            list_time = end_time - start_time
             return {
                 "message":"submitted",
                 "time":elapsed_time,
-                "html_time": end_time - start_time
+                "html_time": html_time,
+                "list_time": list_time,
+                "result": results
             }
 
 
