@@ -81,11 +81,25 @@ class TesseractProcessor:
         logger.info(f"time took to process tesseract is: {t2}")
         logger.info(process_text)
         return process_text
+
+
+@ray.remote(num_gpus=0.5)
+class EasyOcrProcessor:
+    def __init__(self) -> None:
+        self.easyocr = easyocr.Reader(["en"])
+
+    def convert_image_to_text_easyocr(self,image):
+        t1 = time.perf_counter()
+        process_text = self.easyocr.readtext(np.array(image),detail=0,paragraph=True)[0]
+        t2 = time.perf_counter() - t1
+        logger.info(f"time took to process tesseract is: {t2}")
+        return process_text
 @ray.remote
 class OcrProcessor:
     def __init__(self) -> None:
         self.table_engine = PPStructure(lang='en', show_log=True, ocr=True)
-        self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
+        # self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
+        self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
         # self.easyocr = easyocr.Reader(["en"])
     
 
@@ -102,9 +116,20 @@ class OcrProcessor:
         html_string = """"""
         html_string += self.update_html(html_string, page, layout)
         return html_string
-    
+    def process_table_or_image(self,image,page):
+        pass
     def update_html(self, html_code, page, layout_predicted):
-        results = self.pool.map(lambda a,v: a.convert_image_to_text_tessaract.remote(v),[page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)) for block in layout_predicted if block.type not in (Label.TABLE.value,Label.FIGURE.value,Label.FORMULA.value) ])
+        # processed_blocks = [page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))  for block in layout_predicted if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)]
+        # table_and_figure_blocks = [page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))  for block in layout_predicted if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)]
+        processed_blocks = []
+        table_and_figure_blocks = []
+        for idx,block in enumerate(layout_predicted):
+            if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
+                processed_blocks.append(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
+            else:
+                table_and_figure_blocks.append({idx:(block,page)})
+        
+        results = self.pool.map(lambda a,v: a.convert_image_to_text_easyocr.remote(v),processed_blocks)
         logger.info(results)
         for result in results:
             text = result
@@ -137,6 +162,13 @@ class LayoutRequest:
         self.pool = ActorPool([self.model])
         self.ocr = OcrProcessor.remote()
         self.ocr_pool = ActorPool([self.ocr])
+    def release_pool(self):
+        del self.pool
+        del self.model
+    
+    def acquire_pool(self):
+        self.model = Layoutinfer.remote()
+        self.pool = ActorPool([self.model])
     async def __call__(self, request:Request):
         if request.url.path == "/patent":
             url_json = await request.json()
@@ -147,6 +179,7 @@ class LayoutRequest:
             cor_1 = list(self.pool.map(lambda a,v: a.detect.remote(v),pdf))
             end_time = time.time()
             elapsed_time = end_time - start_time
+            self.release_pool()
             # logger.info(len(cor_1))
             start_time = time.time()
             # html_code = ray.get([self.ocr.process_layout.remote(page,layout) for page,layout in zip(pdf,cor_1)])
@@ -158,6 +191,7 @@ class LayoutRequest:
             results = [i for i in html_code]
             end_time = time.time()
             list_time = end_time - start_time
+            threading.Thread(target=self.acquire_pool).start()
             return {
                 "message":"submitted",
                 "time":elapsed_time,
