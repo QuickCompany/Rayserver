@@ -12,6 +12,8 @@ import logging
 import layoutparser as lp
 import threading
 import pytesseract
+import cProfile
+import asyncio
 from pdf2image import convert_from_path, convert_from_bytes
 from typing import Dict, List, Tuple, Optional
 from paddleocr import PaddleOCR, PPStructure
@@ -62,23 +64,30 @@ class VultrImageUploader(object):
         image_url = f"https://{self.hostname}/{self.figures_bucket}/{image_name}"
         return image_url
 
-@ray.remote(num_gpus=0.5)
-class OcrProcessor:
+
+
+@ray.remote
+class TesseractProcessor:
     def __init__(self) -> None:
-        self.table_engine = PPStructure(lang='en', show_log=True, ocr=True)
-        self.easyocr = easyocr.Reader(["en"])
         self.tesseract_path = "/usr/bin/tesseract"
         self.custom_config = r'--oem 3 --psm 6 -c tessedit_use_gpu=1'
         pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
     def convert_image_to_text_tessaract(self,image):
         t1 = time.perf_counter()
 
-        # process_text = pytesseract.image_to_string(image,config=self.custom_config)
-        process_text = self.easyocr.readtext(np.array(image),detail=0,paragraph=True)[0]
+        process_text = pytesseract.image_to_string(image,config=self.custom_config)
+        # process_text = self.easyocr.readtext(np.array(image),detail=0,paragraph=True)[0]
         t2 = time.perf_counter() - t1
         logger.info(f"time took to process tesseract is: {t2}")
         logger.info(process_text)
         return process_text
+@ray.remote
+class OcrProcessor:
+    def __init__(self) -> None:
+        self.table_engine = PPStructure(lang='en', show_log=True, ocr=True)
+        self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
+        # self.easyocr = easyocr.Reader(["en"])
+    
 
     def remove_html_body_tags(self, html_string):
         soup = BeautifulSoup(html_string, 'html.parser')
@@ -95,53 +104,11 @@ class OcrProcessor:
         return html_string
     
     def update_html(self, html_code, page, layout_predicted):
-        process_pool = ThreadPoolExecutor(max_workers=2)
-        # process_pool = ProcessPoolExecutor(max_workers=len(layout_predicted) if len(layout_predicted) <= os.cpu_count() - 3 else 5)
-        results = process_pool.map(self.convert_image_to_text_tessaract,[page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)) for block in layout_predicted if block.type not in (Label.TABLE.value,Label.FIGURE.value,Label.FORMULA.value) ])
-            # if block.type == Label.TEXT.value:
-            #     text = self.convert_image_to_text_tessaract(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
-            #     # text = self.convert_image_to_text_tessaract_from_paddocr_output(ocr_results)
-            #     # print(text)
-            #     html_code += f"\<p>{text}</p>"
-            # elif block.type == Label.FORMULA.value:
-            #     pass
-            #     # print(Label.FORMULA)
-            #     # url = self.vultr_img_uploader.upload_image(self.convert_image_to_byte(
-            #     #         page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
-            #     # html_code += f"<img src=\"{url}\">"
-            # elif block.type == Label.TABLE.value:
-            #     # results = self.table_engine(np.array(page.crop(
-            #     #         (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
-            #     # logger.info(results)
-            #     # for table in results:
-            #     #     table_html = table['res']['html']
-            #     #     preprocessed_table_html = self.remove_html_body_tags(
-            #     #             table_html)
-            #     #     print(preprocessed_table_html)
-            #     #     html_code += f"{preprocessed_table_html}"
-            #     pass
-            # elif block.type == Label.LIST.value:
-            #     text = self.convert_image_to_text_tessaract(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
-            #     # text = self.convert_image_to_text_tessaract_from_paddocr_output(ocr_results)
-            #     # print(text)
-            #     html_code += f"<ul>{text}</ul>"
-            # elif block.type == Label.TITLE.value:
-            #     text = self.convert_image_to_text_tessaract(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
-            #     # text = self.convert_image_to_text_tessaract_from_paddocr_output(ocr_results)
-            #     # print(text)
-            #     html_code += f"<h3>{text}</h3>"
-            # elif block.type == Label.FIGURE.value:
-            #     pass
-            #     # url = self.vultr_img_uploader.upload_image(self.convert_image_to_byte(
-            #     #         page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
-            #     # html_code += self.create_image_tag(url)
+        results = self.pool.map(lambda a,v: a.convert_image_to_text_tessaract.remote(v),[page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)) for block in layout_predicted if block.type not in (Label.TABLE.value,Label.FIGURE.value,Label.FORMULA.value) ])
         logger.info(results)
         for result in results:
-            # Get the result from the asynchronous task
             text = result
-        # Concatenate the result to html_code
             html_code += f"<p>{text}</p>"
-
         return html_code
 
 @ray.remote(num_gpus=0.5,concurrency_groups={"io": 2, "compute": 10})
