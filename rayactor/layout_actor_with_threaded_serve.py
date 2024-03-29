@@ -10,7 +10,7 @@ import layoutparser as lp
 import pytesseract
 from pdf2image import convert_from_bytes
 from typing import Dict, List, Tuple
-from paddleocr import PPStructure
+# from paddleocr import PPStructure
 from enum import Enum
 from uuid import uuid4
 from dotenv import load_dotenv
@@ -35,7 +35,7 @@ class Label(str, Enum):
 
 class VultrImageUploader(object):
     def __init__(self) -> None:
-        load_dotenv("/home/debo/Rayserver/.env")
+        load_dotenv("/root/Rayserver/.env")
         self.hostname = os.getenv("HOST_URL")
         secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
         access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
@@ -88,10 +88,10 @@ class EasyOcrProcessor:
 @ray.remote(memory=1024)
 class OcrProcessor:
     def __init__(self) -> None:
-        self.table_engine = PPStructure(lang='en', layout=False)
-        self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
+        # self.table_engine = PPStructure(lang='en', layout=False)
+        # self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
         self.img_uploader = VultrImageUploader()
-        # self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
+        self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
         # self.easyocr = easyocr.Reader(["en"])
     
 
@@ -166,20 +166,22 @@ class OcrProcessor:
         def process_table_or_image(block, img):
             # Process table or image here
             if block.type == Label.TABLE.value:
-                res = list(self.table_engine(np.array(img)))
                 html_code = """"""
-                logger.info(res)
-                for table in res:
-                    logger.info(f"this is table data: {table}")
-                    table_html = table['res']['html']
-                    preprocessed_table_html = self.remove_html_body_tags(
-                            table_html)
-                    print(preprocessed_table_html)
-                    html_code += f"{preprocessed_table_html}"
+                # res = list(self.table_engine(np.array(img)))
+                # html_code = """"""
+                # logger.info(res)
+                # for table in res:
+                #     logger.info(f"this is table data: {table}")
+                #     table_html = table['res']['html']
+                #     preprocessed_table_html = self.remove_html_body_tags(
+                #             table_html)
+                #     print(preprocessed_table_html)
+                #     html_code += f"{preprocessed_table_html}"
                 return html_code
             else:
                 html_code = """"""
-                url = self.img_uploader.upload_image(self.convert_image_to_byte(img))
+                url = ""
+                # url = self.img_uploader.upload_image(self.convert_image_to_byte(img))
                 html_code += f"<img src=\"{url}\">"
                 return html_code
 
@@ -195,12 +197,6 @@ class OcrProcessor:
         for result in results:
             text = result
             html_code += f"<p>{text}</p>"
-        pr.disable()
-        s = StringIO.StringIO()
-        sortby = 'cumulative'
-        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-
-        ps.dump_stats('stats.dmp')  # dump the stats to a file named stats.dmp
         return html_code
 
 
@@ -208,8 +204,8 @@ class OcrProcessor:
 # @ray.remote(num_gpus=1)
 class Layoutinfer:
     def __init__(self) -> None:
-        model_path: str="/home/debo/Rayserver/model/model_final.pth"
-        config_path: str="/home/debo/Rayserver/model/config.yaml"
+        model_path: str="/root/Rayserver/model/model_final.pth"
+        config_path: str="/root/Rayserver/model/config.yaml"
         extra_config: List=[]
         label_map: Dict[int, str]={0: "extra", 1: "title", 2: "text", 3: "formula",
                     4: "table", 5: "figure", 6: "list"}
@@ -270,6 +266,7 @@ class LayoutRequest:
 
 app: serve.Application = LayoutRequest.bind()
 serve.run(name="newapp",target=app,route_prefix="/",host="0.0.0.0",port=8000)
+
 
 # @ray.remote
 # def infer(req):
