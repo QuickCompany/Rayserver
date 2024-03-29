@@ -74,6 +74,18 @@ class TesseractProcessor:
         return process_text
 
 
+@ray.remote
+class HtmlProcessQueue:
+    def __init__(self) -> None:
+        self.queue = list()
+    def add_item(self,item):
+        self.queue.append(item)
+    def get_work_item(self):
+        if self.queue:
+            return self.queue.pop(0)
+        else:
+            return None
+
 @ray.remote(num_gpus=0.5)
 class EasyOcrProcessor:
     def __init__(self) -> None:
@@ -87,11 +99,14 @@ class EasyOcrProcessor:
         return process_text
 @ray.remote(memory=1024)
 class OcrProcessor:
-    def __init__(self) -> None:
+    def __init__(self,queue) -> None:
         # self.table_engine = PPStructure(lang='en', layout=False)
         # self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
         self.img_uploader = VultrImageUploader()
-        self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
+        self.easyocr_processor = EasyOcrProcessor.remote()
+        self.queue = queue
+        self.work_item_ref = None
+        # self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
         # self.easyocr = easyocr.Reader(["en"])
     
 
@@ -115,88 +130,44 @@ class OcrProcessor:
         cropped_image_bytes = byte_io.getvalue()
 
         return cropped_image_bytes
-    # def process_table_or_image(self,block,image):
-    #     if block.type == Label.TABLE.value:
-    #         res = list(self.table_engine(np.array(image)))
-    #         html_code = """"""
-    #         logger.info(res)
-    #         for table in res:
-    #             logger.info(f"this is table data: {table}")
-    #             table_html = table['res']['html']
-    #             preprocessed_table_html = self.remove_html_body_tags(
-    #                     table_html)
-    #             print(preprocessed_table_html)
-    #             html_code += f"{preprocessed_table_html}"
-    #         return html_code
-    #     else:
-    #         html_code = """"""
-    #         url = self.img_uploader.upload_image(self.convert_image_to_byte(image))
-    #         html_code += f"<img src=\"{url}\">"
-    #         return html_code
-    # def update_html(self, html_code, page, layout_predicted):
-    #     # processed_blocks = [page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))  for block in layout_predicted if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)]
-    #     # table_and_figure_blocks = [page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))  for block in layout_predicted if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)]
-    #     processed_blocks = []
-    #     table_and_figure_blocks = []
-    #     for idx,block in enumerate(layout_predicted):
-    #         if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
-    #             processed_blocks.append(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
-    #         else:
-    #             table_and_figure_blocks.append({idx:(block,page)})
-    #     logger.info(table_and_figure_blocks)
-    #     results = list(self.pool.map(lambda a,v: a.convert_image_to_text.remote(v),processed_blocks))
-    #     del processed_blocks
-    #     for img_dict in table_and_figure_blocks:
-    #         idx = list(img_dict.keys())[0]
-    #         block,img = img_dict.get(idx)
-    #         processed_data = self.process_table_or_image(block,img)
-    #         results.insert(idx,processed_data)
-    #     del table_and_figure_blocks
-    #     logger.info(results)
-    #     for result in results:
-    #         text = result
-    #         html_code += f"<p>{text}</p>"
-    #     return html_code
+    def process_table_or_image(self,block,image):
+        if block.type == Label.TABLE.value:
+            res = list(self.table_engine(np.array(image)))
+            html_code = """"""
+            logger.info(res)
+            for table in res:
+                logger.info(f"this is table data: {table}")
+                table_html = table['res']['html']
+                preprocessed_table_html = self.remove_html_body_tags(
+                        table_html)
+                print(preprocessed_table_html)
+                html_code += f"{preprocessed_table_html}"
+            return html_code
+        else:
+            html_code = """"""
+            url = self.img_uploader.upload_image(self.convert_image_to_byte(image))
+            html_code += f"<img src=\"{url}\">"
+            return html_code
+    
+            
     def update_html(self, html_code, page, layout_predicted):
-        def generate_processed_blocks(layout_predicted):
-            for block in layout_predicted:
-                if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
-                    yield page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
-
-        def process_table_or_image(block, img):
-            # Process table or image here
-            if block.type == Label.TABLE.value:
-                html_code = """"""
-                # res = list(self.table_engine(np.array(img)))
-                # html_code = """"""
-                # logger.info(res)
-                # for table in res:
-                #     logger.info(f"this is table data: {table}")
-                #     table_html = table['res']['html']
-                #     preprocessed_table_html = self.remove_html_body_tags(
-                #             table_html)
-                #     print(preprocessed_table_html)
-                #     html_code += f"{preprocessed_table_html}"
-                return html_code
-            else:
-                html_code = """"""
-                url = ""
-                # url = self.img_uploader.upload_image(self.convert_image_to_byte(img))
-                html_code += f"<img src=\"{url}\">"
-                return html_code
-
-        processed_blocks_generator = generate_processed_blocks(layout_predicted)
-        results = list(self.pool.map(lambda a, v: a.convert_image_to_text.remote(v), processed_blocks_generator))
-        
+        html_code = """"""
         for block in layout_predicted:
-            if block.type in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
-                idx = layout_predicted.index(block)
-                processed_data = process_table_or_image(block, page)
-                results.insert(idx, processed_data)
+                if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
+                    self.queue.add_item.remote(self.easyocr_processor.convert_image_to_text.remote(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+        self.work_item_ref = self.queue.get_work_item.remote()
+        while True:
+            # Get work from the remote queue.
+            work_item = ray.get(self.work_item_ref)
 
-        for result in results:
-            text = result
-            html_code += f"<p>{text}</p>"
+            if work_item is None:
+                break
+
+            self.work_item_ref = self.queue.get_work_item.remote()
+
+            # Do work while we are fetching the next work item.
+            html_code+=work_item
+        self.work_item_ref = None
         return html_code
 
 
@@ -224,7 +195,8 @@ class LayoutRequest:
     def __init__(self) -> None:
         self.model = Layoutinfer.remote()
         self.pool = ActorPool([self.model])
-        self.ocr = OcrProcessor.remote()
+        self.work_queue = HtmlProcessQueue.remote()
+        self.ocr = OcrProcessor.remote(self.work_queue)
         self.ocr_pool = ActorPool([self.ocr])
     def release_pool(self):
         del self.pool
@@ -247,6 +219,7 @@ class LayoutRequest:
             # logger.info(len(cor_1))
             start_time = time.time()
             # html_code = ray.get([self.ocr.process_layout.remote(page,layout) for page,layout in zip(pdf,cor_1)])
+
             html_code = list(self.ocr_pool.map(lambda a,v: a.process_layout.remote(v),list(zip(pdf,cor_1))))
             end_time = time.time()
             logger.info("Total time taken:", elapsed_time, "seconds")
