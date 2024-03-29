@@ -162,11 +162,13 @@ class OcrProcessor:
 
             if work_item is None:
                 break
+            
+            html_code+=work_item
 
             self.work_item_ref = self.queue.get_work_item.remote()
 
             # Do work while we are fetching the next work item.
-            html_code+=work_item
+            
         self.work_item_ref = None
         return html_code
 
