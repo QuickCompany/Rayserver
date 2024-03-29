@@ -1,38 +1,29 @@
 import io
-import re
-import cv2
 import ray
 import os
 import boto3
 import time
-import json
 import requests
 import numpy as np
 import logging
 import layoutparser as lp
-import threading
 import pytesseract
-import cProfile
-import asyncio
-from pdf2image import convert_from_path, convert_from_bytes
-from typing import Dict, List, Tuple, Optional
+from pdf2image import convert_from_bytes
+from typing import Dict, List, Tuple
 from paddleocr import PPStructure
 from enum import Enum
-from PIL import Image
 from uuid import uuid4
 from dotenv import load_dotenv
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 from ray import serve
 from starlette.requests import Request
-import base64
 from ray.util.actor_pool import ActorPool
 import easyocr
-from concurrent.futures import ThreadPoolExecutor,ProcessPoolExecutor
+
 
 
 logger = logging.getLogger("ray.serve")
-
 class Label(str, Enum):
     EXTRA = "extra"
     TITLE = "title"
@@ -112,6 +103,7 @@ class OcrProcessor:
         if soup.body:
             soup.body.unwrap()
         return str(soup)
+    
     def process_layout(self,req: Tuple):
         page,layout = req
         html_string = """"""
@@ -203,7 +195,12 @@ class OcrProcessor:
         for result in results:
             text = result
             html_code += f"<p>{text}</p>"
+        pr.disable()
+        s = StringIO.StringIO()
+        sortby = 'cumulative'
+        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
 
+        ps.dump_stats('stats.dmp')  # dump the stats to a file named stats.dmp
         return html_code
 
 
@@ -270,7 +267,6 @@ class LayoutRequest:
                 "list_time": list_time,
                 "result": results
             }
-
 
 app: serve.Application = LayoutRequest.bind()
 serve.run(name="newapp",target=app,route_prefix="/",host="0.0.0.0",port=8000)
