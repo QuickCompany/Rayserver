@@ -123,48 +123,89 @@ class OcrProcessor:
         cropped_image_bytes = byte_io.getvalue()
 
         return cropped_image_bytes
-    def process_table_or_image(self,block,image):
-        if block.type == Label.TABLE.value:
-            res = list(self.table_engine(np.array(image)))
-            html_code = """"""
-            logger.info(res)
-            for table in res:
-                logger.info(f"this is table data: {table}")
-                table_html = table['res']['html']
-                preprocessed_table_html = self.remove_html_body_tags(
-                        table_html)
-                print(preprocessed_table_html)
-                html_code += f"{preprocessed_table_html}"
-            return html_code
-        else:
-            html_code = """"""
-            url = self.img_uploader.upload_image(self.convert_image_to_byte(image))
-            html_code += f"<img src=\"{url}\">"
-            return html_code
+    # def process_table_or_image(self,block,image):
+    #     if block.type == Label.TABLE.value:
+    #         res = list(self.table_engine(np.array(image)))
+    #         html_code = """"""
+    #         logger.info(res)
+    #         for table in res:
+    #             logger.info(f"this is table data: {table}")
+    #             table_html = table['res']['html']
+    #             preprocessed_table_html = self.remove_html_body_tags(
+    #                     table_html)
+    #             print(preprocessed_table_html)
+    #             html_code += f"{preprocessed_table_html}"
+    #         return html_code
+    #     else:
+    #         html_code = """"""
+    #         url = self.img_uploader.upload_image(self.convert_image_to_byte(image))
+    #         html_code += f"<img src=\"{url}\">"
+    #         return html_code
+    # def update_html(self, html_code, page, layout_predicted):
+    #     # processed_blocks = [page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))  for block in layout_predicted if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)]
+    #     # table_and_figure_blocks = [page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))  for block in layout_predicted if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)]
+    #     processed_blocks = []
+    #     table_and_figure_blocks = []
+    #     for idx,block in enumerate(layout_predicted):
+    #         if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
+    #             processed_blocks.append(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
+    #         else:
+    #             table_and_figure_blocks.append({idx:(block,page)})
+    #     logger.info(table_and_figure_blocks)
+    #     results = list(self.pool.map(lambda a,v: a.convert_image_to_text.remote(v),processed_blocks))
+    #     del processed_blocks
+    #     for img_dict in table_and_figure_blocks:
+    #         idx = list(img_dict.keys())[0]
+    #         block,img = img_dict.get(idx)
+    #         processed_data = self.process_table_or_image(block,img)
+    #         results.insert(idx,processed_data)
+    #     del table_and_figure_blocks
+    #     logger.info(results)
+    #     for result in results:
+    #         text = result
+    #         html_code += f"<p>{text}</p>"
+    #     return html_code
     def update_html(self, html_code, page, layout_predicted):
-        # processed_blocks = [page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))  for block in layout_predicted if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)]
-        # table_and_figure_blocks = [page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))  for block in layout_predicted if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)]
-        processed_blocks = []
-        table_and_figure_blocks = []
-        for idx,block in enumerate(layout_predicted):
-            if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
-                processed_blocks.append(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)))
+        def generate_processed_blocks(layout_predicted):
+            for block in layout_predicted:
+                if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
+                    yield page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
+
+        def process_table_or_image(block, img):
+            # Process table or image here
+            if block.type == Label.TABLE.value:
+                res = list(self.table_engine(np.array(img)))
+                html_code = """"""
+                logger.info(res)
+                for table in res:
+                    logger.info(f"this is table data: {table}")
+                    table_html = table['res']['html']
+                    preprocessed_table_html = self.remove_html_body_tags(
+                            table_html)
+                    print(preprocessed_table_html)
+                    html_code += f"{preprocessed_table_html}"
+                return html_code
             else:
-                table_and_figure_blocks.append({idx:(block,page)})
-        logger.info(table_and_figure_blocks)
-        results = list(self.pool.map(lambda a,v: a.convert_image_to_text.remote(v),processed_blocks))
-        del processed_blocks
-        for img_dict in table_and_figure_blocks:
-            idx = list(img_dict.keys())[0]
-            block,img = img_dict.get(idx)
-            processed_data = self.process_table_or_image(block,img)
-            results.insert(idx,processed_data)
-        del table_and_figure_blocks
-        logger.info(results)
+                html_code = """"""
+                url = self.img_uploader.upload_image(self.convert_image_to_byte(img))
+                html_code += f"<img src=\"{url}\">"
+                return html_code
+
+        processed_blocks_generator = generate_processed_blocks(layout_predicted)
+        results = list(self.pool.map(lambda a, v: a.convert_image_to_text.remote(v), processed_blocks_generator))
+        
+        for block in layout_predicted:
+            if block.type in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
+                idx = layout_predicted.index(block)
+                processed_data = process_table_or_image(block, page)
+                results.insert(idx, processed_data)
+
         for result in results:
             text = result
             html_code += f"<p>{text}</p>"
+
         return html_code
+
 
 @ray.remote(num_gpus=0.5,concurrency_groups={"io": 2, "compute": 10})
 # @ray.remote(num_gpus=1)
