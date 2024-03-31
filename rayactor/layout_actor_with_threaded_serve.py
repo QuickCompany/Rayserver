@@ -1,4 +1,5 @@
 import io
+import threading
 import ray
 import os
 import boto3
@@ -18,6 +19,7 @@ from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 from ray import serve
 from starlette.requests import Request
+from copy import deepcopy
 from ray.util.actor_pool import ActorPool
 import easyocr
 
@@ -74,7 +76,6 @@ class TesseractProcessor:
         return process_text
 
 
-@ray.remote
 class HtmlProcessQueue:
     def __init__(self) -> None:
         self.queue = list()
@@ -85,6 +86,11 @@ class HtmlProcessQueue:
             return self.queue.pop(0)
         else:
             return None
+    def get_queue(self):
+        return self.queue
+    def clear_queue(self):
+        self.queue.clear()
+        return
 
 @ray.remote(num_gpus=0.5)
 class EasyOcrProcessor:
@@ -97,14 +103,15 @@ class EasyOcrProcessor:
         t2 = time.perf_counter() - t1
         logger.info(f"time took to process tesseract is: {t2}")
         return process_text
-@ray.remote(memory=1024)
+
+@ray.remote
 class OcrProcessor:
-    def __init__(self,queue) -> None:
+    def __init__(self) -> None:
         # self.table_engine = PPStructure(lang='en', layout=False)
         # self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
         self.img_uploader = VultrImageUploader()
         self.easyocr_processor = EasyOcrProcessor.remote()
-        self.queue = queue
+        self.queue = list()
         self.work_item_ref = None
         # self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
         # self.easyocr = easyocr.Reader(["en"])
@@ -122,7 +129,7 @@ class OcrProcessor:
     def process_layout(self,req: Tuple):
         page,layout = req
         html_string = """"""
-        html_string += self.update_html(html_string, page, layout)
+        html_string = self.update_html(html_string, page, layout)
         return html_string
     def convert_image_to_byte(self, image):
         byte_io = io.BytesIO()
@@ -154,23 +161,17 @@ class OcrProcessor:
         html_code = """"""
         for block in layout_predicted:
                 if block.type not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
-                    self.queue.add_item.remote(self.easyocr_processor.convert_image_to_text.remote(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
-        self.work_item_ref = self.queue.get_work_item.remote()
-        while True:
-            # Get work from the remote queue.
-            work_item = ray.get(self.work_item_ref)
+                    self.queue.append(self.easyocr_processor.convert_image_to_text.remote(page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))))
+        t1 = time.perf_counter()
+        ref_tasks_list = self.refs_to_tasks()
+        logger.info(f"processed the layout of 1 page:{time.perf_counter()-t1} hh")
+        return ref_tasks_list
 
-            if work_item is None:
-                break
-            
-            html_code+=work_item
-
-            self.work_item_ref = self.queue.get_work_item.remote()
-
-            # Do work while we are fetching the next work item.
-            
-        self.work_item_ref = None
-        return html_code
+    def refs_to_tasks(self):
+        results = deepcopy(self.queue)
+        self.queue.clear()
+        logger.info(type(results))
+        return results
 
 
 @ray.remote(num_gpus=0.5,concurrency_groups={"io": 2, "compute": 10})
@@ -197,8 +198,8 @@ class LayoutRequest:
     def __init__(self) -> None:
         self.model = Layoutinfer.remote()
         self.pool = ActorPool([self.model])
-        self.work_queue = HtmlProcessQueue.remote()
-        self.ocr = OcrProcessor.remote(self.work_queue)
+        # self.work_queue = HtmlProcessQueue()
+        self.ocr = OcrProcessor.remote()
         self.ocr_pool = ActorPool([self.ocr])
     def release_pool(self):
         del self.pool
@@ -227,7 +228,11 @@ class LayoutRequest:
             logger.info("Total time taken:", elapsed_time, "seconds")
             html_time = end_time - start_time
             start_time = time.time()
-            results = [i for i in html_code]
+            logger.info(html_code)
+            results = []
+            for res_list in html_code:
+                results.extend(res_list)
+            results = ray.get(results)
             end_time = time.time()
             list_time = end_time - start_time
             # threading.Thread(target=self.acquire_pool).start()
