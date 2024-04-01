@@ -181,7 +181,7 @@ class OcrProcessor:
                 not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)
             ],
         )
-        return list(results)
+        return results
 
 
 @ray.remote(num_gpus=0.5, concurrency_groups={"io": 2, "compute": 10})
