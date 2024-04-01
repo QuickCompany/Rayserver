@@ -23,7 +23,7 @@ from starlette.requests import Request
 from copy import deepcopy
 from ray.util.actor_pool import ActorPool
 import easyocr
-from concurrent.futures import ProcessPoolExecutor,as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 logger = logging.getLogger("ray.serve")
@@ -168,9 +168,19 @@ class OcrProcessor:
         self.img_uploader = VultrImageUploader()
         self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
 
-    def get_tasks_list(self,req: Tuple):
+    def get_tasks_list(self, req: Tuple):
         page, layout_predicted = req
-        results = self.pool.map(lambda a,v: a.convert_image_to_text.remote(v),[page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)) for block in layout_predicted if block.type not in (Label.TABLE.value,Label.FIGURE.value,Label.FORMULA.value) ])
+        results = self.pool.map(
+            lambda a, v: a.convert_image_to_text.remote(v),
+            [
+                page.crop(
+                    (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)
+                )
+                for block in layout_predicted
+                if block.type
+                not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)
+            ],
+        )
         return list(results)
 
 
@@ -241,7 +251,7 @@ class LayoutRequest:
             html_time = end_time - start_time
             start_time = time.time()
             logger.info(html_code[0])
-            
+
             end_time = time.time()
             list_time = end_time - start_time
             return {
