@@ -108,9 +108,9 @@ class EasyOcrProcessor:
 class OcrProcessor:
     def __init__(self) -> None:
         # self.table_engine = PPStructure(lang='en', layout=False)
-        # self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
+        self.pool = ActorPool([TesseractProcessor.remote() for processor in range(6)])
         self.img_uploader = VultrImageUploader()
-        self.easyocr_processor = EasyOcrProcessor.remote()
+        # self.easyocr_processor = EasyOcrProcessor.remote()
         self.queue = list()
         self.work_item_ref = None
         # self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
@@ -232,6 +232,7 @@ class LayoutRequest:
             results = []
             for res_list in html_code:
                 results.extend(res_list)
+            
             results = ray.get(results)
             end_time = time.time()
             list_time = end_time - start_time
