@@ -113,14 +113,23 @@ class EasyOcrProcessor:
     def __init__(self) -> None:
         self.easyocr = easyocr.Reader(["en"],gpu=True)
 
-    def convert_image_to_text(self, image):
+    def convert_image_to_text(self, data:Tuple):
+        image,block_type = data
         t1 = time.perf_counter()
         process_text = self.easyocr.readtext(np.array(image), detail=0, paragraph=True)[
             0
         ]
         t2 = time.perf_counter() - t1
         logger.info(f"time took to process tesseract is: {t2}")
-        return process_text
+        if block_type == Label.TITLE.value:
+            return f"<h2>{process_text}</h2>"
+        elif block_type == Label.TEXT.value:
+            return f"<p>{process_text}</p>"
+        elif block_type == Label.LIST.value:
+            logger.info(process_text)
+            return f"<ul>{process_text}</ul>"
+        else:
+            return None
 
 
 # @ray.remote
@@ -164,23 +173,26 @@ class EasyOcrProcessor:
 
 @ray.remote
 class OcrProcessor:
-    def __init__(self) -> None:
+    def __init__(self,pool_list) -> None:
         self.img_uploader = VultrImageUploader()
-        self.pool = ActorPool([EasyOcrProcessor.remote(),EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
+        self.pool = pool_list
     def get_tasks_list(self, req: Tuple):
         page, layout_predicted = req
-        results = self.pool.map(
+        html_string = """"""
+        for text in self.pool.map(
             lambda a, v: a.convert_image_to_text.remote(v),
             [
-                page.crop(
+                (page.crop(
                     (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)
-                )
+                ),block.type)
                 for block in layout_predicted
                 if block.type
-                not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value)
+                not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value,Label.EXTRA.value)
             ],
-        )
-        return results
+        ):
+            html_string+=text
+        return html_string
+    
 
 
 @ray.remote(num_gpus=0.5, concurrency_groups={"io": 2, "compute": 10})
@@ -212,10 +224,13 @@ class Layoutinfer:
 class LayoutRequest:
     def __init__(self) -> None:
         self.model = Layoutinfer.remote()
+        self.pool1 = ActorPool([EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
+        # self.pool2 = ActorPool([EasyOcrProcessor.remote()])
         self.pool = ActorPool([self.model])
         # self.work_queue = HtmlProcessQueue()
-        self.ocr = OcrProcessor.remote()
-        self.ocr_pool = ActorPool([self.ocr])
+        self.ocr = OcrProcessor.remote(self.pool1)
+        # self.ocr1 = OcrProcessor.remote(self.pool2)
+        self.ocr_pool = ActorPool([self.ocr,])
 
     def release_pool(self):
         del self.pool
@@ -224,41 +239,37 @@ class LayoutRequest:
     def acquire_pool(self):
         self.model = Layoutinfer.remote()
         self.pool = ActorPool([self.model])
+    
 
     async def __call__(self, request: Request):
         if request.url.path == "/patent":
             url_json = await request.json()
-            link = url_json.get("link")
-            pdf = requests.get(link).content
-            pdf = convert_from_bytes(pdf, thread_count=10)
-            start_time = time.time()
-            cor_1 = list(self.pool.map(lambda a, v: a.detect.remote(v), pdf))
-            end_time = time.time()
-            elapsed_time = end_time - start_time
+            for pdf_json in url_json:
+                self.process_pdf(pdf_json)
+            return {
+                "message": "submitted"
+            }
+
+    def process_pdf(self, url_json):
+        link = url_json.get("link")
+        pdf = requests.get(link).content
+        pdf = convert_from_bytes(pdf, thread_count=10)
+        start_time = time.time()
+        cor_1 = list(self.pool.map(lambda a, v: a.detect.remote(v), pdf))
+        end_time = time.time()
+        elapsed_time = end_time - start_time
             # self.release_pool()
             # logger.info(len(cor_1))
-            start_time = time.time()
+        start_time = time.time()
             # html_code = ray.get([self.ocr.process_layout.remote(page,layout) for page,layout in zip(pdf,cor_1)])
-
-            html_code = list(
-                self.ocr_pool.map(
+        html_code = """"""
+        for text in self.ocr_pool.map(
                     lambda a, v: a.get_tasks_list.remote(v), list(zip(pdf, cor_1))
-                )
-            )
-            end_time = time.time()
-            logger.info("Total time taken:", elapsed_time, "seconds")
-            html_time = end_time - start_time
-            start_time = time.time()
-            logger.info(html_code[0])
-
-            end_time = time.time()
-            list_time = end_time - start_time
-            return {
-                "message": "submitted",
-                "time": elapsed_time,
-                "html_time": html_time,
-                "list_time": list_time,
-            }
+                ):
+            html_code+=text
+        with open(f"{str(uuid4())}.txt","w+") as f:
+             f.write(html_code)
+        return start_time,elapsed_time,html_code
 
 
 app: serve.Application = LayoutRequest.bind()
