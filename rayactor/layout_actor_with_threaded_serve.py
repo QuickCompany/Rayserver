@@ -56,18 +56,35 @@ class VultrImageUploader(object):
                 "aws_secret_access_key": secret_key,
             },
         )
+    def convert_image_to_byte(self, image):
+        byte_io = io.BytesIO()
+        image.save(byte_io, format="JPEG")
+        cropped_image_bytes = byte_io.getvalue()
 
-    def upload_image(self, image: bytes):
+        return cropped_image_bytes
+    def upload_image(self, image):
+        # Define a function to upload image in the background
+        def upload(image, image_name):
+            image_bytes = self.convert_image_to_byte(image)
+            self.client.upload_fileobj(
+                io.BytesIO(image_bytes),
+                self.figures_bucket,
+                image_name,
+                ExtraArgs={"ACL": "public-read"},
+            )
+
+        # Generate a unique image name
         image_name = f"{str(uuid4())}.jpg"
-        self.client.upload_fileobj(
-            io.BytesIO(image),
-            self.figures_bucket,
-            image_name,
-            ExtraArgs={"ACL": "public-read"},
-        )
-        image_url = f"https://{self.hostname}/{self.figures_bucket}/{image_name}"
-        return image_url
 
+        # Start a new thread to upload the image
+        upload_thread = threading.Thread(target=upload, args=(image, image_name))
+        upload_thread.start()
+
+        # Construct the image URL
+        image_url = f"https://{self.hostname}/{self.figures_bucket}/{image_name}"
+
+        # Return the image URL
+        return image_url
 
 @ray.remote
 class TesseractProcessor:
@@ -173,25 +190,44 @@ class EasyOcrProcessor:
 
 @ray.remote
 class OcrProcessor:
-    def __init__(self,pool_list) -> None:
+    def __init__(self) -> None:
         self.img_uploader = VultrImageUploader()
-        self.pool = pool_list
+        self.pool = ActorPool([EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
     def get_tasks_list(self, req: Tuple):
         page, layout_predicted = req
-        html_string = """"""
+        html_string = []
+        html_code = """"""
+        table_figure_formula_list = []
+        remaining_list = []
+
+        for idx,block in enumerate(layout_predicted):
+            cropped_page = page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
+            if block.type in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
+                table_figure_formula_list.append((cropped_page, block.type,idx))
+            elif block.type != Label.EXTRA.value and block.type in (Label.TEXT.value,Label.LIST.value,Label.TITLE.value):
+                remaining_list.append((cropped_page, block.type))
+        
+
         for text in self.pool.map(
             lambda a, v: a.convert_image_to_text.remote(v),
             [
-                (page.crop(
-                    (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2)
-                ),block.type)
-                for block in layout_predicted
-                if block.type
-                not in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value,Label.EXTRA.value)
+                block
+                for block in remaining_list
             ],
         ):
-            html_string+=text
-        return html_string
+            html_string.append(text)
+        
+        for block in table_figure_formula_list:
+            cropped_page,block_type,idx = block
+            if block_type == Label.TABLE.value:
+                pass
+            elif block_type == Label.FIGURE.value or block_type == Label.FORMULA.value:
+                url = self.img_uploader.upload_image(cropped_page)
+                html_string.insert(idx, f'<img src="{url}" />')
+        for text in html_string:
+            html_code+=text
+        return html_code
+    
     
 
 
@@ -224,11 +260,11 @@ class Layoutinfer:
 class LayoutRequest:
     def __init__(self) -> None:
         self.model = Layoutinfer.remote()
-        self.pool1 = ActorPool([EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
+        # self.pool1 = ActorPool([EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
         # self.pool2 = ActorPool([EasyOcrProcessor.remote()])
         self.pool = ActorPool([self.model])
         # self.work_queue = HtmlProcessQueue()
-        self.ocr = OcrProcessor.remote(self.pool1)
+        self.ocr = OcrProcessor.remote()
         # self.ocr1 = OcrProcessor.remote(self.pool2)
         self.ocr_pool = ActorPool([self.ocr,])
 
