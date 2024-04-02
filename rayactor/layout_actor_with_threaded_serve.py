@@ -22,6 +22,7 @@ from ray import serve
 from starlette.requests import Request
 from copy import deepcopy
 from ray.util.actor_pool import ActorPool
+from ray.util.queue import Queue
 import easyocr
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -223,7 +224,7 @@ class OcrProcessor:
                 pass
             elif block_type == Label.FIGURE.value or block_type == Label.FORMULA.value:
                 url = self.img_uploader.upload_image(cropped_page)
-                html_string.insert(idx, f'<img src="{url}" />')
+                html_string.insert(idx, f'<img class="img-fluid" src="{url}" />')
         for text in html_string:
             html_code+=text
         return html_code
@@ -265,7 +266,9 @@ class LayoutRequest:
         self.pool = ActorPool([self.model])
         # self.work_queue = HtmlProcessQueue()
         self.ocr = OcrProcessor.remote()
+        self.queue = Queue()
         # self.ocr1 = OcrProcessor.remote(self.pool2)
+        self.api = "https://www.quickcompany.in/api/v1/patents"
         self.ocr_pool = ActorPool([self.ocr,])
 
     def release_pool(self):
@@ -303,8 +306,8 @@ class LayoutRequest:
                     lambda a, v: a.get_tasks_list.remote(v), list(zip(pdf, cor_1))
                 ):
             html_code+=text
-        with open(f"{str(uuid4())}.txt","w+") as f:
-             f.write(html_code)
+        res = requests.post(url=self.api+f"?slug=modem-control-using-millimeter-wave-energy-measurement&html={html_code}")
+        logger.info(res.content)
         return start_time,elapsed_time,html_code
 
 
