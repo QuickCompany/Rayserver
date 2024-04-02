@@ -108,10 +108,10 @@ class HtmlProcessQueue:
         return
 
 
-@ray.remote(num_gpus=0.5)
+@ray.remote(num_gpus=0.1)
 class EasyOcrProcessor:
     def __init__(self) -> None:
-        self.easyocr = easyocr.Reader(["en"])
+        self.easyocr = easyocr.Reader(["en"],gpu=True)
 
     def convert_image_to_text(self, image):
         t1 = time.perf_counter()
@@ -166,8 +166,7 @@ class EasyOcrProcessor:
 class OcrProcessor:
     def __init__(self) -> None:
         self.img_uploader = VultrImageUploader()
-        self.pool = ActorPool([EasyOcrProcessor.remote() for processor in range(1)])
-
+        self.pool = ActorPool([EasyOcrProcessor.remote(),EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
     def get_tasks_list(self, req: Tuple):
         page, layout_predicted = req
         results = self.pool.map(
