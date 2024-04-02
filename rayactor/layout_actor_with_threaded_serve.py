@@ -267,6 +267,7 @@ class MainInferenceActor:
 
     def process_pdf(self, url_json):
         link = url_json.get("link")
+        slug = url_json.get("slug")
         pdf = requests.get(link).content
         pdf = convert_from_bytes(pdf, thread_count=10)
         start_time = time.time()
@@ -282,10 +283,12 @@ class MainInferenceActor:
             lambda a, v: a.get_tasks_list.remote(v), list(zip(pdf, cor_1))
         ):
             html_code += text
-        with open(f"test.txt", "w+") as f:
-            f.write(html_code)
+        data_body = {
+            "slug": slug,
+            "html": html_code
+        }
         res = requests.post(
-            url=self.api+f"?slug=modem-control-using-millimeter-wave-energy-measurement&html={html_code}")
+            url=self.api,json=data_body)
         logger.info(res.content)
         return start_time, elapsed_time, html_code
 
