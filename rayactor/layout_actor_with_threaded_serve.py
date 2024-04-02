@@ -57,12 +57,14 @@ class VultrImageUploader(object):
                 "aws_secret_access_key": secret_key,
             },
         )
+
     def convert_image_to_byte(self, image):
         byte_io = io.BytesIO()
         image.save(byte_io, format="JPEG")
         cropped_image_bytes = byte_io.getvalue()
 
         return cropped_image_bytes
+
     def upload_image(self, image):
         # Define a function to upload image in the background
         def upload(image, image_name):
@@ -78,7 +80,8 @@ class VultrImageUploader(object):
         image_name = f"{str(uuid4())}.jpg"
 
         # Start a new thread to upload the image
-        upload_thread = threading.Thread(target=upload, args=(image, image_name))
+        upload_thread = threading.Thread(
+            target=upload, args=(image, image_name))
         upload_thread.start()
 
         # Construct the image URL
@@ -86,6 +89,7 @@ class VultrImageUploader(object):
 
         # Return the image URL
         return image_url
+
 
 @ray.remote
 class TesseractProcessor:
@@ -97,20 +101,22 @@ class TesseractProcessor:
     def convert_image_to_text(self, image):
         t1 = time.perf_counter()
 
-        process_text = pytesseract.image_to_string(image, config=self.custom_config)
+        process_text = pytesseract.image_to_string(
+            image, config=self.custom_config)
         # process_text = self.easyocr.readtext(np.array(image),detail=0,paragraph=True)[0]
         t2 = time.perf_counter() - t1
         logger.info(f"time took to process tesseract is: {t2}")
         logger.info(process_text)
         return process_text
 
+
 @ray.remote(num_gpus=0.1)
 class EasyOcrProcessor:
     def __init__(self) -> None:
-        self.easyocr = easyocr.Reader(["en"],gpu=True)
+        self.easyocr = easyocr.Reader(["en"], gpu=True)
 
-    def convert_image_to_text(self, data:Tuple):
-        image,block_type = data
+    def convert_image_to_text(self, data: Tuple):
+        image, block_type = data
         t1 = time.perf_counter()
         process_text = self.easyocr.readtext(np.array(image), detail=0, paragraph=True)[
             0
@@ -171,7 +177,9 @@ class EasyOcrProcessor:
 class OcrProcessor:
     def __init__(self) -> None:
         self.img_uploader = VultrImageUploader()
-        self.pool = ActorPool([EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
+        self.pool = ActorPool(
+            [EasyOcrProcessor.remote(), EasyOcrProcessor.remote()])
+
     def get_tasks_list(self, req: Tuple):
         page, layout_predicted = req
         html_string = []
@@ -179,13 +187,14 @@ class OcrProcessor:
         table_figure_formula_list = []
         remaining_list = []
 
-        for idx,block in enumerate(layout_predicted):
-            cropped_page = page.crop((block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
+        for idx, block in enumerate(layout_predicted):
+            cropped_page = page.crop(
+                (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
             if block.type in (Label.TABLE.value, Label.FIGURE.value, Label.FORMULA.value):
-                table_figure_formula_list.append((cropped_page, block.type,idx))
-            elif block.type != Label.EXTRA.value and block.type in (Label.TEXT.value,Label.LIST.value,Label.TITLE.value):
+                table_figure_formula_list.append(
+                    (cropped_page, block.type, idx))
+            elif block.type != Label.EXTRA.value and block.type in (Label.TEXT.value, Label.LIST.value, Label.TITLE.value):
                 remaining_list.append((cropped_page, block.type))
-        
 
         for text in self.pool.map(
             lambda a, v: a.convert_image_to_text.remote(v),
@@ -195,19 +204,18 @@ class OcrProcessor:
             ],
         ):
             html_string.append(text)
-        
+
         for block in table_figure_formula_list:
-            cropped_page,block_type,idx = block
+            cropped_page, block_type, idx = block
             if block_type == Label.TABLE.value:
                 pass
             elif block_type == Label.FIGURE.value or block_type == Label.FORMULA.value:
                 url = self.img_uploader.upload_image(cropped_page)
-                html_string.insert(idx, f'<img class="img-fluid" src="{url}" />')
+                html_string.insert(
+                    idx, f'<img class="img-fluid" src="{url}" />')
         for text in html_string:
-            html_code+=text
+            html_code += text
         return html_code
-    
-    
 
 
 @ray.remote(num_gpus=0.5, concurrency_groups={"io": 2, "compute": 10})
@@ -248,6 +256,7 @@ class MainInferenceActor:
         # self.ocr1 = OcrProcessor.remote(self.pool2)
         self.api = "https://www.quickcompany.in/api/v1/patents"
         self.ocr_pool = ActorPool([self.ocr,])
+
     def release_pool(self):
         del self.pool
         del self.model
@@ -255,7 +264,7 @@ class MainInferenceActor:
     def acquire_pool(self):
         self.model = Layoutinfer.remote()
         self.pool = ActorPool([self.model])
-    
+
     def process_pdf(self, url_json):
         link = url_json.get("link")
         pdf = requests.get(link).content
@@ -264,25 +273,28 @@ class MainInferenceActor:
         cor_1 = list(self.pool.map(lambda a, v: a.detect.remote(v), pdf))
         end_time = time.time()
         elapsed_time = end_time - start_time
-            # self.release_pool()
-            # logger.info(len(cor_1))
+        # self.release_pool()
+        # logger.info(len(cor_1))
         start_time = time.time()
-            # html_code = ray.get([self.ocr.process_layout.remote(page,layout) for page,layout in zip(pdf,cor_1)])
+        # html_code = ray.get([self.ocr.process_layout.remote(page,layout) for page,layout in zip(pdf,cor_1)])
         html_code = """"""
         for text in self.ocr_pool.map(
-                    lambda a, v: a.get_tasks_list.remote(v), list(zip(pdf, cor_1))
-                ):
-            html_code+=text
-        with open(f"test.txt","w+") as f:
+            lambda a, v: a.get_tasks_list.remote(v), list(zip(pdf, cor_1))
+        ):
+            html_code += text
+        with open(f"test.txt", "w+") as f:
             f.write(html_code)
-        res = requests.post(url=self.api+f"?slug=modem-control-using-millimeter-wave-energy-measurement&html={html_code}")
+        res = requests.post(
+            url=self.api+f"?slug=modem-control-using-millimeter-wave-energy-measurement&html={html_code}")
         logger.info(res.content)
-        return start_time,elapsed_time,html_code
+        return start_time, elapsed_time, html_code
+
 
 @serve.deployment(num_replicas=1)
 class LayoutRequest:
     def __init__(self) -> None:
         self.actor = MainInferenceActor.remote()
+
     async def __call__(self, request: Request):
         if request.url.path == "/patent":
             url_json = await request.json()
@@ -292,8 +304,7 @@ class LayoutRequest:
                 "message": "submitted"
             }
 
-    
-
 
 app: serve.Application = LayoutRequest.bind()
-serve.run(name="newapp", target=app, route_prefix="/", host="0.0.0.0", port=8000)
+serve.run(name="newapp", target=app,
+          route_prefix="/", host="0.0.0.0", port=8000)
