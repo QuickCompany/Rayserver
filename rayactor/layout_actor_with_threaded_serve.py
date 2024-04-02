@@ -104,28 +104,6 @@ class TesseractProcessor:
         logger.info(process_text)
         return process_text
 
-
-class HtmlProcessQueue:
-    def __init__(self) -> None:
-        self.queue = list()
-
-    def add_item(self, item):
-        self.queue.append(item)
-
-    def get_work_item(self):
-        if self.queue:
-            return self.queue.pop(0)
-        else:
-            return None
-
-    def get_queue(self):
-        return self.queue
-
-    def clear_queue(self):
-        self.queue.clear()
-        return
-
-
 @ray.remote(num_gpus=0.1)
 class EasyOcrProcessor:
     def __init__(self) -> None:
@@ -301,7 +279,7 @@ class MainInferenceActor:
         logger.info(res.content)
         return start_time,elapsed_time,html_code
 
-@serve.deployment(num_replicas=2)
+@serve.deployment(num_replicas=1)
 class LayoutRequest:
     def __init__(self) -> None:
         self.actor = MainInferenceActor.remote()
@@ -319,39 +297,3 @@ class LayoutRequest:
 
 app: serve.Application = LayoutRequest.bind()
 serve.run(name="newapp", target=app, route_prefix="/", host="0.0.0.0", port=8000)
-
-
-# @ray.remote
-# def infer(req):
-#     res = model.detect(req)
-#     return res
-# if __name__ == "__main__":
-#     # app = Layoutinfer.bind()
-
-
-#     # model2 = Layoutinfer.remote()
-#     # pdf = requests.get("https://blr1.vultrobjects.com/patents/202217062765/documents/2-24cedfd84f9667807b6ee8686ca3df03.pdf").content # 122
-#     # pdf = requests.get("https://blr1.vultrobjects.com/patents/202247067002/documents/4-475075f807f045cf98a0a6b974bcf5d4.pdf").content #141 pages
-#     pdf = requests.get("https://blr1.vultrobjects.com/patents/202217005905/documents/2-61492acc6b023adedfe020f11e23c212.pdf").content
-#     pdf = convert_from_bytes(pdf)
-#     pdf_len = len(pdf)
-#     model = Layoutinfer.remote()
-#     # model = Layoutinfer.options(max_concurrency=pdf_len).remote()
-#     pool = ActorPool([model])
-#     start_time = time.time()
-#     cor_1 = list(pool.map(lambda a,v: a.detect.remote(v),pdf))
-#     # cor_1 = ray.get([model.detect.remote(page) for page in pdf])
-#     # cor_2 = [model2.detect.remote(page) for page in pdf[pdf_len//2:]]
-
-#     # cor = cor_1+cor_2
-#     # for result in cor:
-#     #     print(ray.get(cor))
-#     end_time = time.time()
-#     elapsed_time = end_time - start_time
-#     print(len(cor_1))
-#     print("Total time taken:", elapsed_time, "seconds")
-#     print(cor_1[-1])
-#     # print(cor_1[0])
-
-#     # print("\n==============================\n")
-#     # print(cor_1[-1])
