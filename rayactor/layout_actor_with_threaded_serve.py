@@ -257,8 +257,8 @@ class Layoutinfer:
         return result
 
 
-@serve.deployment(num_replicas=1)
-class LayoutRequest:
+@ray.remote
+class MainInferenceActor:
     def __init__(self) -> None:
         self.model = Layoutinfer.remote()
         # self.pool1 = ActorPool([EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
@@ -270,7 +270,6 @@ class LayoutRequest:
         # self.ocr1 = OcrProcessor.remote(self.pool2)
         self.api = "https://www.quickcompany.in/api/v1/patents"
         self.ocr_pool = ActorPool([self.ocr,])
-
     def release_pool(self):
         del self.pool
         del self.model
@@ -279,16 +278,6 @@ class LayoutRequest:
         self.model = Layoutinfer.remote()
         self.pool = ActorPool([self.model])
     
-
-    async def __call__(self, request: Request):
-        if request.url.path == "/patent":
-            url_json = await request.json()
-            for pdf_json in url_json:
-                self.process_pdf(pdf_json)
-            return {
-                "message": "submitted"
-            }
-
     def process_pdf(self, url_json):
         link = url_json.get("link")
         pdf = requests.get(link).content
@@ -306,9 +295,26 @@ class LayoutRequest:
                     lambda a, v: a.get_tasks_list.remote(v), list(zip(pdf, cor_1))
                 ):
             html_code+=text
+        with open(f"test.txt","w+") as f:
+            f.write(html_code)
         res = requests.post(url=self.api+f"?slug=modem-control-using-millimeter-wave-energy-measurement&html={html_code}")
         logger.info(res.content)
         return start_time,elapsed_time,html_code
+
+@serve.deployment(num_replicas=2)
+class LayoutRequest:
+    def __init__(self) -> None:
+        self.actor = MainInferenceActor.remote()
+    async def __call__(self, request: Request):
+        if request.url.path == "/patent":
+            url_json = await request.json()
+            for pdf_json in url_json:
+                self.actor.process_pdf.remote(pdf_json)
+            return {
+                "message": "submitted"
+            }
+
+    
 
 
 app: serve.Application = LayoutRequest.bind()
