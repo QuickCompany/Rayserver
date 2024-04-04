@@ -290,7 +290,7 @@ class MainInferenceActor:
         res = requests.post(
             url=self.api,json=data_body)
         logger.info(res.content)
-        return start_time, elapsed_time, html_code
+        return
 
 
 @serve.deployment(num_replicas=1)
