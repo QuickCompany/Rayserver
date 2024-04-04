@@ -183,4 +183,4 @@ class Translator:
 ray.init(address="auto")
 # Create and bind the deployment
 translator_app = Translator.bind()
-serve.run(target=translator_app, host='0.0.0.0', port=8000)
+serve.run(target=translator_app, host='0.0.0.0', port=8001)
