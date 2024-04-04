@@ -178,7 +178,7 @@ class OcrProcessor:
     def __init__(self) -> None:
         self.img_uploader = VultrImageUploader()
         self.pool = ActorPool(
-            [EasyOcrProcessor.remote(), EasyOcrProcessor.remote()])
+            [EasyOcrProcessor.remote()])
 
     def get_tasks_list(self, req: Tuple):
         page, layout_predicted = req
@@ -218,7 +218,7 @@ class OcrProcessor:
         return html_code
 
 
-@ray.remote(num_gpus=0.5, concurrency_groups={"io": 2, "compute": 10})
+@ray.remote(num_gpus=0.1, concurrency_groups={"io": 2, "compute": 10})
 class Layoutinfer:
     def __init__(self) -> None:
         model_path: str = "/root/Rayserver/model/model_final.pth"

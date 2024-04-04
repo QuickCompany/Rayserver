@@ -18,9 +18,9 @@ ray_serve_logger = logging.getLogger("ray.serve")
 @serve.deployment(route_prefix="/judgement_pipeline", num_replicas=1, ray_actor_options={"num_cpus": 1, 'num_gpus': 0.5})
 class Translator:
     def __init__(self):
-        load_dotenv("/root/rayserver/.env")
-        model_path = "/root/layout_parsing/finetuned-model/model_final.pth"
-        config_path = "/root/layout_parsing/config.yml"
+        load_dotenv("/root/Rayserver/.env")
+        model_path = "/root/Rayserver/model/model_final.pth"
+        config_path = "/root/Rayserver/model/config.yaml"
         hostname = os.getenv("HOST_URL")
         secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
         access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
@@ -179,8 +179,6 @@ class Translator:
         else:
             return {"error": "Invalid endpoint"}
 
-
-ray.init(address="auto")
 # Create and bind the deployment
 translator_app = Translator.bind()
-serve.run(target=translator_app, host='0.0.0.0', port=8001)
+serve.run(target=translator_app, host='0.0.0.0')
