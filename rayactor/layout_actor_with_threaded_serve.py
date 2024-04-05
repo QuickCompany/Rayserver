@@ -178,7 +178,7 @@ class OcrProcessor:
     def __init__(self) -> None:
         self.img_uploader = VultrImageUploader()
         self.pool = ActorPool(
-            [EasyOcrProcessor.remote()])
+            [EasyOcrProcessor.remote(),EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
 
     def get_tasks_list(self, req: Tuple):
         page, layout_predicted = req
@@ -272,12 +272,6 @@ class MainInferenceActor:
         pdf = convert_from_bytes(pdf, thread_count=10)
         start_time = time.time()
         cor_1 = list(self.pool.map(lambda a, v: a.detect.remote(v), pdf))
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        # self.release_pool()
-        # logger.info(len(cor_1))
-        start_time = time.time()
-        # html_code = ray.get([self.ocr.process_layout.remote(page,layout) for page,layout in zip(pdf,cor_1)])
         html_code = """"""
         for text in self.ocr_pool.map(
             lambda a, v: a.get_tasks_list.remote(v), list(zip(pdf, cor_1))
@@ -289,7 +283,10 @@ class MainInferenceActor:
         }
         res = requests.post(
             url=self.api,json=data_body)
+        end_time = time.time()
+        elapsed_time = end_time - start_time
         logger.info(res.content)
+        logger.info(f"processed :{slug} with {len(pdf)} pages.")
         return
 
 
