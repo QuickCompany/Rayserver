@@ -286,7 +286,7 @@ class MainInferenceActor:
         end_time = time.time()
         elapsed_time = end_time - start_time
         logger.info(res.content)
-        logger.info(f"processed :{slug} with {len(pdf)} pages.")
+        logger.info(f"processed :{slug} with {len(pdf)} pages in {elapsed_time} seconds.")
         return
 
 
