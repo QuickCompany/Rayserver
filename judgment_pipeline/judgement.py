@@ -15,7 +15,7 @@ from label_studio_sdk.utils import parse_config
 ray_serve_logger = logging.getLogger("ray.serve")
 
 
-@serve.deployment(route_prefix="/judgement_pipeline", num_replicas=1, ray_actor_options={"num_cpus": 1, 'num_gpus': 0.5})
+@serve.deployment(route_prefix="/judgement_pipeline", num_replicas=1, ray_actor_options={'num_gpus': 0.1})
 class Translator:
     def __init__(self):
         load_dotenv("/root/Rayserver/.env")
@@ -45,11 +45,6 @@ class Translator:
                        4: "table", 5: "figure", 6: "list"}
         )
 
-        # Specify the languages you want to support
-        self.ocr = PaddleOCR(use_angle_cls=True, lang='en')
-
-        self.table_engine = PPStructure(lang='en', show_log=True, ocr=True)
-        self.table_engine2 = PPStructure(lang='en', layout=False)
 
     def preprocess(self, data):
         img_array = np.frombuffer(data, dtype=np.uint8)
@@ -152,7 +147,7 @@ class Translator:
             return {
                 "status": "setup done"
             }
-        elif request.url.path == "/predict":
+        elif request.url.path == "/judgement_pipeline/predict":
             json_data = await request.json()
             ray_serve_logger.info(json_data)
             predictions = []

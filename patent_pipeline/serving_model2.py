@@ -19,8 +19,8 @@ ray_serve_logger = logging.getLogger("ray.serve")
 class Translator:
     def __init__(self):
         load_dotenv("/root/rayserver/.env")
-        model_path = "/root/layout_parsing/finetuned-model/model_final.pth"
-        config_path = "/root/layout_parsing/config.yml"
+        model_path = "/root/Rayserver/model/finetuned-model/model_final.pth"
+        config_path = "/root/Rayserver/model/config.yaml"
         hostname = os.getenv("HOST_URL")
         secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
         access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
