@@ -91,15 +91,17 @@ class VultrImageUploader(object):
         return image_url
 
 
-@ray.remote
+@ray.remote(num_cpus=1)
 class TesseractProcessor:
     def __init__(self) -> None:
         self.tesseract_path = "/usr/bin/tesseract"
         self.custom_config = r"--oem 3 --psm 6 -c tessedit_use_gpu=1"
         pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
 
-    def convert_image_to_text(self, image):
+    def convert_image_to_text(self, data:Tuple):
+        logger.info(f"inside the function")
         t1 = time.perf_counter()
+        image, block_type = data
 
         process_text = pytesseract.image_to_string(
             image, config=self.custom_config)
@@ -110,28 +112,19 @@ class TesseractProcessor:
         return process_text
 
 
-@ray.remote(num_gpus=0.1)
+# @ray.remote(num_gpus=0.1)
 class EasyOcrProcessor:
     def __init__(self) -> None:
         self.easyocr = easyocr.Reader(["en"], gpu=True)
 
-    def convert_image_to_text(self, data: Tuple):
-        image, block_type = data
+    def convert_image_to_text(self, data):
+        image = np.array(data)
         t1 = time.perf_counter()
-        process_text = self.easyocr.readtext(np.array(image), detail=0, paragraph=True)[
-            0
-        ]
+        process_text = self.easyocr.readtext_batched(image, detail=0, paragraph=True)
         t2 = time.perf_counter() - t1
+        logger.info(f"text processed:{process_text}")
         logger.info(f"time took to process tesseract is: {t2}")
-        if block_type == Label.TITLE.value:
-            return f"<h2>{process_text}</h2>"
-        elif block_type == Label.TEXT.value:
-            return f"<p>{process_text}</p>"
-        elif block_type == Label.LIST.value:
-            logger.info(process_text)
-            return f"<ul>{process_text}</ul>"
-        else:
-            return None
+        return ""
 
 
 # @ray.remote
@@ -173,12 +166,13 @@ class EasyOcrProcessor:
 #         return cropped_image_bytes
 
 
-@ray.remote
-class OcrProcessor:
+@ray.remote(num_gpus=0.5)
+class OcrProcessor():
     def __init__(self) -> None:
         self.img_uploader = VultrImageUploader()
-        self.pool = ActorPool(
-            [EasyOcrProcessor.remote(),EasyOcrProcessor.remote(),EasyOcrProcessor.remote()])
+        self.easyocr = easyocr.Reader(["en"], gpu=True)
+        # self.pool = ActorPool(
+        #     [TesseractProcessor.remote(),TesseractProcessor.remote(),TesseractProcessor.remote(),TesseractProcessor.remote()])
 
     def get_tasks_list(self, req: Tuple):
         page, layout_predicted = req
@@ -195,16 +189,10 @@ class OcrProcessor:
                     (cropped_page, block.type, idx))
             elif block.type != Label.EXTRA.value and block.type in (Label.TEXT.value, Label.LIST.value, Label.TITLE.value):
                 remaining_list.append((cropped_page, block.type))
-
-        for text in self.pool.map(
-            lambda a, v: a.convert_image_to_text.remote(v),
-            [
-                block
-                for block in remaining_list
-            ],
-        ):
-            html_string.append(text)
-
+        t1 = time.perf_counter()
+        logger.info(f"processing text")
+        text = self.easyocr.readtext_batched(np.array(remaining_list),batch_size=len(remaining_list))
+        logger.info(f"text processed:{time.perf_counter()-t1} with {text}")
         for block in table_figure_formula_list:
             cropped_page, block_type, idx = block
             if block_type == Label.TABLE.value:
@@ -252,7 +240,6 @@ class MainInferenceActor:
         self.pool = ActorPool([self.model])
         # self.work_queue = HtmlProcessQueue()
         self.ocr = OcrProcessor.remote()
-        self.queue = Queue()
         # self.ocr1 = OcrProcessor.remote(self.pool2)
         self.api = "https://www.quickcompany.in/api/v1/patents"
         self.ocr_pool = ActorPool([self.ocr,])
