@@ -136,18 +136,24 @@ pdf = requests.get(link).content
 pdf = convert_from_bytes(pdf, thread_count=10)
 layout_model = Layoutinfer.remote()
 easyocr_model = EasyOcr.remote()
+easyocr_model_2 = EasyOcr.remote()
 start_time = time.time()
 cor_1 =list(ray.get([layout_model.detect.remote(i) for i in pdf]))
 logger.info(cor_1)
 page_pred = list(zip(pdf,cor_1))
 
+ray.kill(layout_model)
 results = list(chain.from_iterable(list(ray.get([get_pdf_text.remote(i) for i in page_pred]))))
 print(len(results))
 result_in_batch = split_into_batches(results,20)
 
-res = ray.get([easyocr_model.process_image.remote(i) for i in result_in_batch])
 
-for result in res:
+pool = ActorPool([easyocr_model,easyocr_model_2])
+# res = ray.get([easyocr_model.process_image.remote(i) for i in result_in_batch])
+
+
+
+for result in pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
     print(result)
 
 # app: serve.Application = LayoutRequest.bind()
