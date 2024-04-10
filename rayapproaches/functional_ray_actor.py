@@ -2,13 +2,13 @@ import io
 import threading
 import ray
 import os
-import boto3
+# import boto3
 import time
 import requests
 import numpy as np
 import logging
 import layoutparser as lp
-import pytesseract
+# import pytesseract
 from pdf2image import convert_from_bytes
 from typing import Dict, List, Tuple
 
@@ -23,9 +23,10 @@ from starlette.requests import Request
 from copy import deepcopy
 from ray.util.actor_pool import ActorPool
 from ray.util.queue import Queue
-import easyocr
+# import easyocr
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import chain
+from paddleocr import PaddleOCR, PPStructure
 
 logger = logging.getLogger("ray.serve")
 
@@ -41,9 +42,9 @@ class Label(str, Enum):
 
 
 
-def load_easyocr():
-    reader = easyocr.Reader(lang_list=["en"],gpu=True)
-    return reader
+# def load_easyocr():
+#     reader = easyocr.Reader(lang_list=["en"],gpu=True)
+#     return reader
 
 def load_layout():
     model_path: str = "/root/Rayserver/model/model_final.pth"
@@ -92,19 +93,32 @@ class Layoutinfer:
         result = self.model.detect(image)
         return result
 
+# @ray.remote(num_gpus=0.5)
+# class EasyOcr:
+#     def __init__(self) -> None:
+#         self.model = load_easyocr()
+#     async def process_image(self,image_data):
+#         try:
+#             # text = model.readtext(np.array(image_data),detail=0,paragraph=True)
+#             text = self.model.readtext_batched(image_data,n_height=800,n_width=600)
+#             return text
+#         except Exception as e:
+#             logger.info(e)
+
 @ray.remote(num_gpus=0.5)
-class EasyOcr:
+class PaddleOcr:
     def __init__(self) -> None:
-        self.model = load_easyocr()
+        self.model = PPStructure(lang='en', show_log=True, ocr=True)
     async def process_image(self,image_data):
         try:
             # text = model.readtext(np.array(image_data),detail=0,paragraph=True)
-            text = self.model.readtext_batched(image_data,n_height=800,n_width=600)
+            # text = self.model.readtext_batched(image_data,n_height=800,n_width=600)
+            text = self.model(image_data)
             return text
         except Exception as e:
             logger.info(e)
 
-@ray.remote(num_gpus=0.5)
+@ray.remote(num_gpus=0.5,num_cpus=0)
 def process_image(model_ref,image_data):
     try:
         # text = model.readtext(np.array(image_data),detail=0,paragraph=True)
@@ -149,7 +163,8 @@ logger.info(cor_1)
 page_pred = list(zip(pdf,cor_1))
 
 ray.kill(layout_model)
-easyocr_model = EasyOcr.remote()
+paddocr_model = PaddleOcr.remote()
+# easyocr_model = EasyOcr.remote()
 # easyocr_model_2 = EasyOcr.remote()
 
 results = list(chain.from_iterable(list(ray.get([get_pdf_text.remote(i) for i in page_pred]))))
@@ -158,14 +173,15 @@ print(len(results))
 result_in_batch = split_into_batches(results,20)
 
 
-pool = ActorPool([easyocr_model])
+# pool = ActorPool([easyocr_model])
+pool = ActorPool([PaddleOcr.remote() for i in range(1)])
 t1 = time.time()
 
 # res = ray.get([process_image.remote(model_ref,i) for i in result_in_batch])
 print(f"time take:{time.time()-t1}")
 
 
-for result in pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
+for result in pool.map(lambda a,v:a.process_image.remote(v),results):
     print(result)
 # print(f"time take:{time.time()-t1}")
 # app: serve.Application = LayoutRequest.bind()
