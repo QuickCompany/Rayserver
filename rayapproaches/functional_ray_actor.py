@@ -31,6 +31,9 @@ from itertools import chain
 from paddleocr import PaddleOCR, PPStructure
 import paddle
 from ray import serve
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+from PIL import Image
+import torch
 logger = logging.getLogger("ray.serve")
 
 
@@ -42,12 +45,6 @@ class Label(str, Enum):
     TABLE = "table"
     LIST = "list"
     FIGURE = "figure"
-
-
-
-# def load_easyocr():
-#     reader = easyocr.Reader(lang_list=["en"],gpu=True)
-#     return reader
 
 def load_layout():
     model_path: str = "/root/Rayserver/model/model_final.pth"
@@ -67,10 +64,28 @@ def load_layout():
     )
     return layout_model
 
-# model = load_easyocr()
-# # layout_model = load_layout()
-# # layout_model_ref = ray.put(layout_model)
-# model_ref = ray.put(model)
+
+@ray.remote(num_gpus=0.5)
+class TransformerOcrprocessor:
+    def __init__(self) -> None:
+        
+        self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
+        self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed')
+        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed').to(self.device) 
+    def process_image(self,image):
+        try:
+            image = Image.fromarray(image)
+            # logger.info(image)
+            pixel_values = self.processor(images=image, return_tensors="pt").pixel_values.to(self.device)
+            # logger.info(self.device)
+            # logger.info(pixel_values)
+            generated_ids = self.model.generate(pixel_values)
+            generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0] 
+            logger.info(generated_text)
+            return generated_text
+        except Exception as e:
+            logger.info(e)
+
 
 @ray.remote(num_gpus=0.1, concurrency_groups={"io": 2, "compute": 10})
 class Layoutinfer:
@@ -94,44 +109,10 @@ class Layoutinfer:
     @ray.method(concurrency_group="compute")
     async def detect(self, image):
         result = self.model.detect(image)
+        logger.info(result)
         return result
 
-# @ray.remote(num_gpus=0.5)
-# class EasyOcr:
-#     def __init__(self) -> None:
-#         self.model = load_easyocr()
-#     async def process_image(self,image_data):
-#         try:
-#             # text = model.readtext(np.array(image_data),detail=0,paragraph=True)
-#             text = self.model.readtext_batched(image_data,n_height=800,n_width=600)
-#             return text
-#         except Exception as e:
-#             logger.info(e)
 
-@ray.remote(num_gpus=0.5)
-class PaddleOcr:
-    def __init__(self) -> None:
-        self.model = PPStructure(lang='en', show_log=False, ocr=True)
-    async def process_image(self,image_data):
-        try:
-            # text = model.readtext(np.array(image_data),detail=0,paragraph=True)
-            # text = self.model.readtext_batched(image_data,n_height=800,n_width=600)
-            text_list = list()
-            for i in image_data:
-                text = self.model(i)
-                text_list.append(text)
-            return text_list
-        except Exception as e:
-            logger.info(e)
-
-@ray.remote(num_gpus=0.5,num_cpus=0)
-def process_image(model_ref,image_data):
-    try:
-        # text = model.readtext(np.array(image_data),detail=0,paragraph=True)
-        text = model_ref.readtext_batched(image_data,n_height=800,n_width=600)
-        return text
-    except Exception as e:
-        logger.info(e)
 
 @ray.remote(num_gpus=0.1)
 def detect_image(layout_model,image):
@@ -158,45 +139,40 @@ def get_pdf_text(req: Tuple):
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
-        self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
+        # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
+        self.pool = ActorPool([TransformerOcrprocessor.remote()])
+    def del_model(self):
+        ray.kill(self.layout_model)
+    def acquire_model(self):
+        self.layout_model  = Layoutinfer.remote()
     def process_url(self):
         url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
         link = url_json.get("link")
         slug = url_json.get("slug")
         pdf = requests.get(link).content
         pdf = convert_from_bytes(pdf, thread_count=20)
-        # layout_model = Layoutinfer.remote()
-        # pool = ActorPool([PaddleOcr.remote() for i in range(1)])
         start_time = time.time()
         cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
         logger.info(cor_1)
+        self.del_model()
         page_pred = list(zip(pdf,cor_1))
-
-        # ray.kill(layout_model)
-        # paddocr_model = PaddleOcr.remote()
-        # easyocr_model = EasyOcr.remote()
-        # easyocr_model_2 = EasyOcr.remote()
-
         results = list(chain.from_iterable(list(ray.get([get_pdf_text.remote(i) for i in page_pred]))))
-
-        print(len(results))
-        result_in_batch = split_into_batches(results,10)
-
-
-        # pool = ActorPool([easyocr_model])
-
+        logger.info(results)
+        result_in_batch = split_into_batches(results,30)
         t1 = time.time()
-
-    # res = ray.get([process_image.remote(model_ref,i) for i in result_in_batch])
-    # print(f"time take:{time.time()-t1}")
-
-
-        for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
-            # print(result)
-            print("pass")
-        print(f"time take:{time.time()-t1}")
+        for result in self.pool.map(lambda a,v:a.process_image.remote(v),results):
+            logger.info(result)
+            # print("pass")
+        logger.info(f"time take:{time.time()-t1}")
+        self.acquire_model()
 
 
+
+
+
+# p = ProcessActor()
+# for i in range(1):
+#     p.process_url()
 @serve.deployment(num_replicas=1)
 class MainActorServe:
     def __init__(self) -> None:
