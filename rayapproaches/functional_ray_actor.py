@@ -72,15 +72,16 @@ class TransformerOcrprocessor:
         self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
         self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed')
         self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed').to(self.device) 
-    def process_image(self,image):
+    def process_image(self,images):
         try:
-            image = Image.fromarray(image)
+            # image = Image.fromarray(image)
+            image_list = [Image.fromarray(image) for image in images]
             # logger.info(image)
-            pixel_values = self.processor(images=image, return_tensors="pt").pixel_values.to(self.device)
+            pixel_values = self.processor(images=image_list, return_tensors="pt").pixel_values.to(self.device)
             # logger.info(self.device)
             # logger.info(pixel_values)
             generated_ids = self.model.generate(pixel_values)
-            generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0] 
+            generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
             logger.info(generated_text)
             return generated_text
         except Exception as e:
@@ -158,9 +159,9 @@ class ProcessActor:
         page_pred = list(zip(pdf,cor_1))
         results = list(chain.from_iterable(list(ray.get([get_pdf_text.remote(i) for i in page_pred]))))
         logger.info(results)
-        result_in_batch = split_into_batches(results,30)
+        result_in_batch = split_into_batches(results,10)
         t1 = time.time()
-        for result in self.pool.map(lambda a,v:a.process_image.remote(v),results):
+        for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
             logger.info(result)
             # print("pass")
         logger.info(f"time take:{time.time()-t1}")
