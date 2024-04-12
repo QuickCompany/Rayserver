@@ -157,11 +157,20 @@ class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
-        self.pool = ActorPool([TransformerOcrprocessor.remote()])
+        # self.pool = ActorPool([TransformerOcrprocessor.remote()])
+        self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def del_model(self):
         ray.kill(self.layout_model)
+    def del_ocr_model(self):
+        del self.pool
+    def acquire_pool(self):
+        self.pool = ActorPool([TransformerOcrprocessor.remote()])
     def acquire_model(self):
         self.layout_model  = Layoutinfer.remote()
+    def del_table_pool(self):
+        del self.tableprocessorpool
+    def acquire_table_pool(self):
+        self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def process_url(self):
         url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
         link = url_json.get("link")
@@ -180,9 +189,15 @@ class ProcessActor:
         logger.info(table_list)
         result_in_batch = split_into_batches(remaining_list,50)
         t1 = time.time()
-        for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
+        # for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
+        #     logger.info(result)
+        #     # print("pass")
+        # self.del_ocr_model()
+        # self.acquire_table_pool()
+        for result in self.tableprocessorpool.map(lambda a,v:a.process_table.remote(v),table_list):
             logger.info(result)
-            # print("pass")
+        # self.del_table_pool()
+        # self.acquire_pool()
         logger.info(f"time take:{time.time()-t1}")
         self.acquire_model()
 
