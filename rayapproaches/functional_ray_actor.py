@@ -31,7 +31,7 @@ from itertools import chain
 from paddleocr import PaddleOCR, PPStructure
 import paddle
 from ray import serve
-from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel, AutoImageProcessor,TableTransformerModel
 from PIL import Image
 import torch
 logger = logging.getLogger("ray.serve")
@@ -86,7 +86,17 @@ class TransformerOcrprocessor:
             return generated_text
         except Exception as e:
             logger.info(e)
-
+@ray.remote(num_gpus=0.5)
+class TransformerTableProcessor:
+    def __init__(self) -> None:
+        self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
+        self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
+        self.model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection").to(self.device)
+    def process_table(self,images):
+        image_list = [Image.fromarray(image) for image in images]
+        inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
+        outputs = self.model(**inputs)
+        return outputs
 
 @ray.remote(num_gpus=0.1, concurrency_groups={"io": 2, "compute": 10})
 class Layoutinfer:
