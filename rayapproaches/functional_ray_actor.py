@@ -139,12 +139,18 @@ def split_into_batches(lst, batch_size):
 def get_pdf_text(req: Tuple):
         page, layout_predicted = req
         remaining_list = []
+        table_list = []
         for idx, block in enumerate(layout_predicted):
             cropped_page = page.crop(
                 (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
             if block.type != Label.EXTRA.value and block.type in (Label.TEXT.value, Label.LIST.value, Label.TITLE.value):
                 remaining_list.append(np.array(cropped_page))
-        return remaining_list
+            elif block.type==Label.TABLE.value:
+                table_list.append(cropped_page)
+        return {
+            "textlist":remaining_list,
+            "tablelist":table_list
+        }
 
 @ray.remote
 class ProcessActor:
@@ -167,9 +173,12 @@ class ProcessActor:
         logger.info(cor_1)
         self.del_model()
         page_pred = list(zip(pdf,cor_1))
-        results = list(chain.from_iterable(list(ray.get([get_pdf_text.remote(i) for i in page_pred]))))
-        logger.info(results)
-        result_in_batch = split_into_batches(results,10)
+        results = list(ray.get([get_pdf_text.remote(i) for i in page_pred]))
+
+        remaining_list = list(chain.from_iterable([res.get("textlist") for res in results if res.get("textlist")  is not None]))
+        table_list = list(chain.from_iterable([res.get("tablelist") for res in results if res.get("tablelist") is not None]))
+        logger.info(table_list)
+        result_in_batch = split_into_batches(remaining_list,50)
         t1 = time.time()
         for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
             logger.info(result)
