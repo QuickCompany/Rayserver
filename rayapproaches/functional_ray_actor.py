@@ -1,9 +1,11 @@
 import io
 import threading
+import paddle.vision
 import ray
 import os
 # import boto3
 import time
+import ray.serve
 import requests
 import numpy as np
 import logging
@@ -27,7 +29,8 @@ from ray.util.queue import Queue
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import chain
 from paddleocr import PaddleOCR, PPStructure
-
+import paddle
+from ray import serve
 logger = logging.getLogger("ray.serve")
 
 
@@ -108,13 +111,16 @@ class Layoutinfer:
 @ray.remote(num_gpus=0.5)
 class PaddleOcr:
     def __init__(self) -> None:
-        self.model = PPStructure(lang='en', show_log=True, ocr=True)
+        self.model = PPStructure(lang='en', show_log=False, ocr=True)
     async def process_image(self,image_data):
         try:
             # text = model.readtext(np.array(image_data),detail=0,paragraph=True)
             # text = self.model.readtext_batched(image_data,n_height=800,n_width=600)
-            text = self.model(image_data)
-            return text
+            text_list = list()
+            for i in image_data:
+                text = self.model(i)
+                text_list.append(text)
+            return text_list
         except Exception as e:
             logger.info(e)
 
@@ -148,42 +154,60 @@ def get_pdf_text(req: Tuple):
                 remaining_list.append(np.array(cropped_page))
         return remaining_list
 
+@ray.remote
+class ProcessActor:
+    def __init__(self) -> None:
+        self.layout_model = Layoutinfer.remote()
+        self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
+    def process_url(self):
+        url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
+        link = url_json.get("link")
+        slug = url_json.get("slug")
+        pdf = requests.get(link).content
+        pdf = convert_from_bytes(pdf, thread_count=20)
+        # layout_model = Layoutinfer.remote()
+        # pool = ActorPool([PaddleOcr.remote() for i in range(1)])
+        start_time = time.time()
+        cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
+        logger.info(cor_1)
+        page_pred = list(zip(pdf,cor_1))
+
+        # ray.kill(layout_model)
+        # paddocr_model = PaddleOcr.remote()
+        # easyocr_model = EasyOcr.remote()
+        # easyocr_model_2 = EasyOcr.remote()
+
+        results = list(chain.from_iterable(list(ray.get([get_pdf_text.remote(i) for i in page_pred]))))
+
+        print(len(results))
+        result_in_batch = split_into_batches(results,10)
+
+
+        # pool = ActorPool([easyocr_model])
+
+        t1 = time.time()
+
+    # res = ray.get([process_image.remote(model_ref,i) for i in result_in_batch])
+    # print(f"time take:{time.time()-t1}")
+
+
+        for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
+            # print(result)
+            print("pass")
+        print(f"time take:{time.time()-t1}")
+
+
+@serve.deployment(num_replicas=1)
+class MainActorServe:
+    def __init__(self) -> None:
+        self.process_actor = ProcessActor.remote()
+    def __call__(self, request:Request):
+        if request.url.path == "/predict":
+            self.process_actor.process_url.remote()
+            return "200" 
 
 
 
-url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
-link = url_json.get("link")
-slug = url_json.get("slug")
-pdf = requests.get(link).content
-pdf = convert_from_bytes(pdf, thread_count=10)
-layout_model = Layoutinfer.remote()
-start_time = time.time()
-cor_1 =list(ray.get([layout_model.detect.remote(i) for i in pdf]))
-logger.info(cor_1)
-page_pred = list(zip(pdf,cor_1))
-
-ray.kill(layout_model)
-paddocr_model = PaddleOcr.remote()
-# easyocr_model = EasyOcr.remote()
-# easyocr_model_2 = EasyOcr.remote()
-
-results = list(chain.from_iterable(list(ray.get([get_pdf_text.remote(i) for i in page_pred]))))
-
-print(len(results))
-result_in_batch = split_into_batches(results,20)
-
-
-# pool = ActorPool([easyocr_model])
-pool = ActorPool([PaddleOcr.remote() for i in range(1)])
-t1 = time.time()
-
-# res = ray.get([process_image.remote(model_ref,i) for i in result_in_batch])
-print(f"time take:{time.time()-t1}")
-
-
-for result in pool.map(lambda a,v:a.process_image.remote(v),results):
-    print(result)
-# print(f"time take:{time.time()-t1}")
-# app: serve.Application = LayoutRequest.bind()
-# serve.run(name="newapp", target=app,
-#           route_prefix="/", host="0.0.0.0", port=8000)
+app: serve.Application = MainActorServe.bind()
+serve.run(name="newapp", target=app,
+          route_prefix="/", host="0.0.0.0", port=8000)
