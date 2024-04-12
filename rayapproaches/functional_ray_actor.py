@@ -146,19 +146,20 @@ def get_pdf_text(req: Tuple):
             if block.type != Label.EXTRA.value and block.type in (Label.TEXT.value, Label.LIST.value, Label.TITLE.value):
                 remaining_list.append(np.array(cropped_page))
             elif block.type==Label.TABLE.value:
-                table_list.append(cropped_page)
+                table_list.append(np.array(cropped_page))
         return {
             "textlist":remaining_list,
             "tablelist":table_list
         }
 
-@ray.remote
+# @ray.remote
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
         # self.pool = ActorPool([TransformerOcrprocessor.remote()])
-        self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
+        self.table_ocr = TransformerTableProcessor.remote()
+        # self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def del_model(self):
         ray.kill(self.layout_model)
     def del_ocr_model(self):
@@ -191,11 +192,13 @@ class ProcessActor:
         t1 = time.time()
         # for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
         #     logger.info(result)
-        #     # print("pass")
+            # print("pass")
         # self.del_ocr_model()
         # self.acquire_table_pool()
-        for result in self.tableprocessorpool.map(lambda a,v:a.process_table.remote(v),table_list):
-            logger.info(result)
+        res = ray.get([self.table_ocr.process_table.remote(table_list)])
+        logger.info(res)
+        # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
+        #     logger.info(result)
         # self.del_table_pool()
         # self.acquire_pool()
         logger.info(f"time take:{time.time()-t1}")
@@ -205,20 +208,20 @@ class ProcessActor:
 
 
 
-# p = ProcessActor()
-# for i in range(1):
-#     p.process_url()
-@serve.deployment(num_replicas=1)
-class MainActorServe:
-    def __init__(self) -> None:
-        self.process_actor = ProcessActor.remote()
-    def __call__(self, request:Request):
-        if request.url.path == "/predict":
-            self.process_actor.process_url.remote()
-            return "200" 
+p = ProcessActor()
+for i in range(1):
+    p.process_url()
+# @serve.deployment(num_replicas=1)
+# class MainActorServe:
+#     def __init__(self) -> None:
+#         self.process_actor = ProcessActor.remote()
+#     def __call__(self, request:Request):
+#         if request.url.path == "/predict":
+#             self.process_actor.process_url.remote()
+#             return "200" 
 
 
 
-app: serve.Application = MainActorServe.bind()
-serve.run(name="newapp", target=app,
-          route_prefix="/", host="0.0.0.0", port=8000)
+# app: serve.Application = MainActorServe.bind()
+# serve.run(name="newapp", target=app,
+#           route_prefix="/", host="0.0.0.0", port=8000)
