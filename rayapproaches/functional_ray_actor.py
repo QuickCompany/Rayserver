@@ -74,7 +74,7 @@ class TransformerOcrprocessor:
         self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-small-printed').to(self.device) 
         self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
         self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection").to(self.device)
-    def process_image(self,images):
+    async def process_image(self,images):
         try:
             # image = Image.fromarray(image)
             t1 = time.perf_counter()
@@ -90,12 +90,14 @@ class TransformerOcrprocessor:
             return generated_text
         except Exception as e:
             logger.info(e)
-    def process_table(self,images):
+    async def process_table(self,images):
         image_list = [Image.fromarray(image) for image in images]
         inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
         outputs = self.table_model(**inputs)
-        logger.info(outputs)
-        return outputs.to("cpu")
+        results = {"last_hidden_state":outputs["last_hidden_state"].to("cpu"),
+                   "encoder_last_hidden_state": outputs["encoder_last_hidden_state"].to("cpu")
+                   }
+        return results
 
 @ray.remote(num_gpus=0.5)
 class TransformerTableProcessor:
@@ -163,7 +165,7 @@ def get_pdf_text(req: Tuple):
             "tablelist":table_list
         }
 
-@ray.remote
+# @ray.remote
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
@@ -223,20 +225,20 @@ class ProcessActor:
 
 
 
-# p = ProcessActor()
-# for i in range(1):
-#     p.process_url()
-@serve.deployment(num_replicas=1)
-class MainActorServe:
-    def __init__(self) -> None:
-        self.process_actor = ProcessActor.remote()
-    def __call__(self, request:Request):
-        if request.url.path == "/predict":
-            self.process_actor.process_url.remote()
-            return "200" 
+p = ProcessActor()
+for i in range(1):
+    p.process_url()
+# @serve.deployment(num_replicas=1)
+# class MainActorServe:
+#     def __init__(self) -> None:
+#         self.process_actor = ProcessActor.remote()
+#     def __call__(self, request:Request):
+#         if request.url.path == "/predict":
+#             self.process_actor.process_url.remote()
+#             return "200" 
 
 
 
-app: serve.Application = MainActorServe.bind()
-serve.run(name="newapp", target=app,
-          route_prefix="/", host="0.0.0.0", port=8000)
+# app: serve.Application = MainActorServe.bind()
+# serve.run(name="newapp", target=app,
+#           route_prefix="/", host="0.0.0.0", port=8000)
