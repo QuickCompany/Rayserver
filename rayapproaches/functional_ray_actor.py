@@ -186,8 +186,8 @@ class ProcessActor:
         del self.tableprocessorpool
     def acquire_table_pool(self):
         self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
-    def process_url(self):
-        url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
+    def process_url(self,url_json):
+        # url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
         link = url_json.get("link")
         slug = url_json.get("slug")
         pdf = requests.get(link).content
@@ -204,16 +204,20 @@ class ProcessActor:
         logger.info(table_list)
         result_in_batch = split_into_batches(remaining_list,50)
         t1 = time.time()
+        html_string = """"""
         for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
             logger.info(result)
+            for text in result:
+                html_string+=text
             # print("pass")
-        
+        logger.info(html_string)
         # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
         #     logger.info(result)
         # self.del_ocr_model()
         # self.acquire_table_pool()
-        res = ray.get([self.ocr.process_table.remote(table_list)])
-        logger.info(res)
+        if len(table_list) != 0:
+            res = ray.get([self.ocr.process_table.remote(table_list)])
+            logger.info(res)
         # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
         #     logger.info(result)
         # self.del_table_pool()
@@ -227,15 +231,20 @@ class ProcessActor:
 
 
 # p = ProcessActor()
-# for i in range(1):
-#     p.process_url()
+# data = [
+# {"slug":"text","link":"https://blr1.vultrobjects.com/patents/2023/04/30/9c0474371786b9d0362d459e5a021043.pdf"}
+# ]
+# for i in data:
+#     p.process_url(i)
 @serve.deployment(num_replicas=1)
 class MainActorServe:
     def __init__(self) -> None:
         self.process_actor = ProcessActor.remote()
-    def __call__(self, request:Request):
+    async def __call__(self, request:Request):
         if request.url.path == "/predict":
-            self.process_actor.process_url.remote()
+            url_json = await request.json()
+            for data in url_json:
+                self.process_actor.process_url.remote(data)
             return "200" 
 
 
