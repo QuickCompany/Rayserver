@@ -165,7 +165,7 @@ def get_pdf_text(req: Tuple):
             "tablelist":table_list
         }
 
-# @ray.remote
+@ray.remote
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
@@ -220,25 +220,26 @@ class ProcessActor:
         # self.acquire_pool()
         logger.info(f"time take:{time.time()-t1}")
         self.acquire_model()
+        
 
 
 
 
 
-p = ProcessActor()
-for i in range(1):
-    p.process_url()
-# @serve.deployment(num_replicas=1)
-# class MainActorServe:
-#     def __init__(self) -> None:
-#         self.process_actor = ProcessActor.remote()
-#     def __call__(self, request:Request):
-#         if request.url.path == "/predict":
-#             self.process_actor.process_url.remote()
-#             return "200" 
+# p = ProcessActor()
+# for i in range(1):
+#     p.process_url()
+@serve.deployment(num_replicas=1)
+class MainActorServe:
+    def __init__(self) -> None:
+        self.process_actor = ProcessActor.remote()
+    def __call__(self, request:Request):
+        if request.url.path == "/predict":
+            self.process_actor.process_url.remote()
+            return "200" 
 
 
 
-# app: serve.Application = MainActorServe.bind()
-# serve.run(name="newapp", target=app,
-#           route_prefix="/", host="0.0.0.0", port=8000)
+app: serve.Application = MainActorServe.bind()
+serve.run(name="newapp", target=app,
+          route_prefix="/", host="0.0.0.0", port=8000)
