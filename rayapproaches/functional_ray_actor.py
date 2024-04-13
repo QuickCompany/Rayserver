@@ -70,11 +70,14 @@ class TransformerOcrprocessor:
     def __init__(self) -> None:
         
         self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
-        self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed')
-        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed').to(self.device) 
+        self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-small-printed')
+        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-small-printed').to(self.device) 
+        self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
+        self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection").to(self.device)
     def process_image(self,images):
         try:
             # image = Image.fromarray(image)
+            t1 = time.perf_counter()
             image_list = [Image.fromarray(image) for image in images]
             # logger.info(image)
             pixel_values = self.processor(images=image_list, return_tensors="pt").pixel_values.to(self.device)
@@ -83,9 +86,17 @@ class TransformerOcrprocessor:
             generated_ids = self.model.generate(pixel_values)
             generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
             logger.info(generated_text)
+            logger.info(f"processed batch in: {time.perf_counter() - t1}")
             return generated_text
         except Exception as e:
             logger.info(e)
+    def process_table(self,images):
+        image_list = [Image.fromarray(image) for image in images]
+        inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
+        outputs = self.table_model(**inputs)
+        logger.info(outputs)
+        return outputs.to("cpu")
+
 @ray.remote(num_gpus=0.5)
 class TransformerTableProcessor:
     def __init__(self) -> None:
@@ -94,7 +105,7 @@ class TransformerTableProcessor:
         self.model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection").to(self.device)
     def process_table(self,images):
         image_list = [Image.fromarray(image) for image in images]
-        inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
+        inputs = self.image_processor(images=image_list, return_tensors="pt")
         outputs = self.model(**inputs)
         return outputs
 
@@ -152,13 +163,14 @@ def get_pdf_text(req: Tuple):
             "tablelist":table_list
         }
 
-# @ray.remote
+@ray.remote
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
-        # self.pool = ActorPool([TransformerOcrprocessor.remote()])
-        self.table_ocr = TransformerTableProcessor.remote()
+        self.ocr = TransformerOcrprocessor.remote()
+        self.pool = ActorPool([self.ocr])
+        # self.table_ocr = TransformerTableProcessor.remote()
         # self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def del_model(self):
         ray.kill(self.layout_model)
@@ -180,7 +192,7 @@ class ProcessActor:
         pdf = convert_from_bytes(pdf, thread_count=20)
         start_time = time.time()
         cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
-        logger.info(cor_1)
+        # logger.info(cor_1)
         self.del_model()
         page_pred = list(zip(pdf,cor_1))
         results = list(ray.get([get_pdf_text.remote(i) for i in page_pred]))
@@ -190,12 +202,15 @@ class ProcessActor:
         logger.info(table_list)
         result_in_batch = split_into_batches(remaining_list,50)
         t1 = time.time()
-        # for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
-        #     logger.info(result)
+        for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
+            logger.info(result)
             # print("pass")
+        
+        # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
+        #     logger.info(result)
         # self.del_ocr_model()
         # self.acquire_table_pool()
-        res = ray.get([self.table_ocr.process_table.remote(table_list)])
+        res = ray.get([self.ocr.process_table.remote(table_list)])
         logger.info(res)
         # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
         #     logger.info(result)
@@ -208,20 +223,20 @@ class ProcessActor:
 
 
 
-p = ProcessActor()
-for i in range(1):
-    p.process_url()
-# @serve.deployment(num_replicas=1)
-# class MainActorServe:
-#     def __init__(self) -> None:
-#         self.process_actor = ProcessActor.remote()
-#     def __call__(self, request:Request):
-#         if request.url.path == "/predict":
-#             self.process_actor.process_url.remote()
-#             return "200" 
+# p = ProcessActor()
+# for i in range(1):
+#     p.process_url()
+@serve.deployment(num_replicas=1)
+class MainActorServe:
+    def __init__(self) -> None:
+        self.process_actor = ProcessActor.remote()
+    def __call__(self, request:Request):
+        if request.url.path == "/predict":
+            self.process_actor.process_url.remote()
+            return "200" 
 
 
 
-# app: serve.Application = MainActorServe.bind()
-# serve.run(name="newapp", target=app,
-#           route_prefix="/", host="0.0.0.0", port=8000)
+app: serve.Application = MainActorServe.bind()
+serve.run(name="newapp", target=app,
+          route_prefix="/", host="0.0.0.0", port=8000)
