@@ -65,22 +65,25 @@ def load_layout():
     return layout_model
 
 
-@ray.remote(num_gpus=0.5)
+@ray.remote(num_gpus=0.5,num_cpus=0.05)
 class TransformerOcrprocessor:
     def __init__(self) -> None:
         
         self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
+        logger.info(self.device)
         self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-small-printed')
-        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-small-printed').to(self.device) 
+        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-small-printed')
+        self.model.to(self.device)
         self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
-        self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection").to(self.device)
+        self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection")
+        self.table_model.to(self.device)
     async def process_image(self,images):
         try:
             # image = Image.fromarray(image)
             t1 = time.perf_counter()
             image_list = [Image.fromarray(image) for image in images]
             # logger.info(image)
-            pixel_values = self.processor(images=image_list, return_tensors="pt").pixel_values.to(self.device)
+            pixel_values = self.processor(images=image_list, return_tensors="pt").pixel_values
             # logger.info(self.device)
             # logger.info(pixel_values)
             generated_ids = self.model.generate(pixel_values)
@@ -92,26 +95,15 @@ class TransformerOcrprocessor:
             logger.info(e)
     async def process_table(self,images):
         image_list = [Image.fromarray(image) for image in images]
-        inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
+        inputs = self.image_processor(images=image_list, return_tensors="pt")
         outputs = self.table_model(**inputs)
         results = {"last_hidden_state":outputs["last_hidden_state"].to("cpu"),
                    "encoder_last_hidden_state": outputs["encoder_last_hidden_state"].to("cpu")
                    }
         return results
 
-@ray.remote(num_gpus=0.5)
-class TransformerTableProcessor:
-    def __init__(self) -> None:
-        self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
-        self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
-        self.model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection").to(self.device)
-    def process_table(self,images):
-        image_list = [Image.fromarray(image) for image in images]
-        inputs = self.image_processor(images=image_list, return_tensors="pt")
-        outputs = self.model(**inputs)
-        return outputs
 
-@ray.remote(num_gpus=0.1, concurrency_groups={"io": 2, "compute": 10})
+@ray.remote(num_gpus=0.5,num_cpus=0.01, concurrency_groups={"io": 2, "compute": 10})
 class Layoutinfer:
     def __init__(self) -> None:
         model_path: str = "/root/Rayserver/model/model_final.pth"
@@ -136,19 +128,12 @@ class Layoutinfer:
         logger.info(result)
         return result
 
-
-
-@ray.remote(num_gpus=0.1)
-def detect_image(layout_model,image):
-    prediction = layout_model.detect(image)
-    return prediction
-
 # Function to split list into batches
 def split_into_batches(lst, batch_size):
     for i in range(0, len(lst), batch_size):
         yield lst[i:i+batch_size]
 
-@ray.remote(num_cpus=1)
+@ray.remote(num_cpus=0.01)
 def get_pdf_text(req: Tuple):
         page, layout_predicted = req
         remaining_list = []
@@ -165,7 +150,7 @@ def get_pdf_text(req: Tuple):
             "tablelist":table_list
         }
 
-@ray.remote
+# @ray.remote(num_cpus=0.01)
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
@@ -176,16 +161,8 @@ class ProcessActor:
         # self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def del_model(self):
         ray.kill(self.layout_model)
-    def del_ocr_model(self):
-        del self.pool
-    def acquire_pool(self):
-        self.pool = ActorPool([TransformerOcrprocessor.remote()])
     def acquire_model(self):
         self.layout_model  = Layoutinfer.remote()
-    def del_table_pool(self):
-        del self.tableprocessorpool
-    def acquire_table_pool(self):
-        self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def process_url(self,url_json):
         # url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
         link = url_json.get("link")
@@ -195,7 +172,7 @@ class ProcessActor:
         start_time = time.time()
         cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
         # logger.info(cor_1)
-        self.del_model()
+        # self.del_model()
         page_pred = list(zip(pdf,cor_1))
         results = list(ray.get([get_pdf_text.remote(i) for i in page_pred]))
 
@@ -223,32 +200,32 @@ class ProcessActor:
         # self.del_table_pool()
         # self.acquire_pool()
         logger.info(f"time take:{time.time()-t1}")
-        self.acquire_model()
+        # self.acquire_model()
         
 
 
 
 
 
-# p = ProcessActor()
-# data = [
-# {"slug":"text","link":"https://blr1.vultrobjects.com/patents/2023/04/30/9c0474371786b9d0362d459e5a021043.pdf"}
-# ]
-# for i in data:
-#     p.process_url(i)
-@serve.deployment(num_replicas=1)
-class MainActorServe:
-    def __init__(self) -> None:
-        self.process_actor = ProcessActor.remote()
-    async def __call__(self, request:Request):
-        if request.url.path == "/predict":
-            url_json = await request.json()
-            for data in url_json:
-                self.process_actor.process_url.remote(data)
-            return "200" 
+p = ProcessActor()
+data = [
+{"slug":"text","link":"https://blr1.vultrobjects.com/patents/2023/04/30/9c0474371786b9d0362d459e5a021043.pdf"}
+]
+for i in data:
+    p.process_url(i)
+# @serve.deployment(num_replicas=1)
+# class MainActorServe:
+#     def __init__(self) -> None:
+#         self.process_actor = ProcessActor.remote()
+#     async def __call__(self, request:Request):
+#         if request.url.path == "/predict":
+#             url_json = await request.json()
+#             for data in url_json:
+#                 self.process_actor.process_url.remote(data)
+#             return "200" 
 
 
 
-app: serve.Application = MainActorServe.bind()
-serve.run(name="newapp", target=app,
-          route_prefix="/", host="0.0.0.0", port=8000)
+# app: serve.Application = MainActorServe.bind()
+# serve.run(name="newapp", target=app,
+#           route_prefix="/", host="0.0.0.0", port=8000)
