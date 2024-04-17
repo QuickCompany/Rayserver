@@ -15,8 +15,6 @@ ray_serve_logger = logging.getLogger("ray.serve")
 @serve.deployment(route_prefix="/", num_replicas=1, ray_actor_options={"num_cpus": 1, 'num_gpus': 0.5})
 class Translator:
     def __init__(self):
-        load_dotenv("/root/rayserver/.env")
-        model_path = ""
         hostname = os.getenv("HOST_URL")
         labelstudio_access_token = os.getenv("LABELSTUDIO_API_TOKEN")
         self.labelstudio_api_url = os.getenv("LABELSTUDIO_API_URL")
@@ -34,10 +32,6 @@ class Translator:
             return res.json()
         else:
             return None
-
-    def formatted_model_results(self, from_name, to_name, img_height, img_width, layout_predicted_results):
-        results = list()
-        return results
 
     def create_prediction(self, results, task_id, is_prediction_exist, score):
         if is_prediction_exist:
@@ -78,28 +72,13 @@ class Translator:
         elif request.url.path == "/predict":
             json_data = await request.json()
             ray_serve_logger.info(json_data)
-            predictions = []
-            results = []
-            tasks = json_data.get("tasks")
-            label_config = parse_config(json_data.get("label_config"))
-            from_name = list(label_config.items())[0][0]
-            ray_serve_logger.info(from_name)
-            to_name = label_config.get("label").get("to_name")[0]
-            for task in tasks:
-                ray_serve_logger.info(task)
-                results, task_id, is_prediction_exist, score = self.process_single_task(
-                    from_name, to_name, task)
-                res = self.create_prediction(
-                    results, task_id, is_prediction_exist, score)
-                ray_serve_logger.info(res.content)
-                predictions.append({
-                    "result": results,
-                    "score": score,
-                    "model_version": "something"
-                })
-            ray_serve_logger.info(predictions)
-            return predictions
-
+            for task in json_data.get("tasks"):
+                text = task.get("data").get("text")
+                ray_serve_logger.info(text)
+                pred = self.model(text)
+                ray_serve_logger.info(pred.to_json())
+                for ent in pred.ents:
+                    ray_serve_logger.info(f"Entity: {ent.text}, Label: {ent.label_}")
         else:
             return {"error": "Invalid endpoint"}
 
