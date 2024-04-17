@@ -19,7 +19,7 @@ PREDICTION_GPU_ID = -1
 EVAL_SPLIT = 0.15
 
 # Batch size for predictions
-PREDICTION_BATCH_SIZE = 16
+PREDICTION_BATCH_SIZE = 120
 
 # Score threshold for a category to be accepted
 TEXTCAT_SCORE_THRESHOLD = 0.5
@@ -58,6 +58,7 @@ class SpacyModel(LabelStudioMLBase):
         map = {}
         from_names = [name for names in LABEL_CONFIG.values()
                       for name in names]
+        print(self.parsed_label_config.items())
         for from_name, schema in self.parsed_label_config.items():
             if from_name in from_names:
                 continue
@@ -83,7 +84,7 @@ class SpacyModel(LabelStudioMLBase):
 
     def load(self):
         # model_dir = os.path.dirname(os.path.realpath(__file__))
-        # fallback_dir = os.path.join(model_dir, "latest-model")
+        # fallback_dir = os.path.join(model_dir, "model-best")
 
         # if PREDICTION_GPU_ID > -1:
         #     spacy.prefer_gpu(gpu_id=PREDICTION_GPU_ID)
@@ -92,9 +93,10 @@ class SpacyModel(LabelStudioMLBase):
         #     return spacy.load(self.train_output['model_path'])
         # elif os.path.isdir(fallback_dir):
         #     return spacy.load(fallback_dir)
-
+        # print(model_dir)
+        # print(fallback_dir)
         # return None
-        return spacy.load("/root/Rayserver/spacy_pipeline/label-studio-spacy/ner_model_server/output/model-best")
+        return spacy.load("/home/debo/Rayserver/label-studio-spacy/ner_model_server/output/model-best")
 
     def predict(self, tasks, **kwargs):
         """ This is where inference happens: model returns 
@@ -103,11 +105,14 @@ class SpacyModel(LabelStudioMLBase):
         # if not self.model:
         #     logger.error("model has not been trained yet")
         #     return {}
-
+        self._
         ner_labels = self.ner_labels()
         spancat_labels = self.spancat_labels()
         textcat_labels = self.textcat_labels()
         predictions = []
+        for task in tasks:
+            print(task)
+            text = task["data"]["text"]
 
         docs = self.model.pipe([t['data']['text']
                                for t in tasks], batch_size=PREDICTION_BATCH_SIZE)
