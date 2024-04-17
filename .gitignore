@@ -6,3 +6,5 @@ grafana-v10.4.1
 data
 prometheus-2.51.1.linux-amd64
 *.out
+*.json
+cache.db
