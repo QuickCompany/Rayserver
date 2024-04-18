@@ -36,10 +36,12 @@ def get_previous_prediction(task_id):
         return None
 
 
-def create_prediction(results, task_id, is_prediction_exist, score):
+def create_prediction(results, task_id, score):
     print(task_id)
     url = labelstudio_api_url
-    if is_prediction_exist:
+    is_prediction_exist = get_previous_prediction(task_id)
+    print(f"exists:{is_prediction_exist}")
+    if is_prediction_exist is not None:
         method = "PUT"
     else:
         method = "POST"
@@ -54,7 +56,9 @@ def create_prediction(results, task_id, is_prediction_exist, score):
     print(response.text)
     return response
 
-
+def get_prediction_details(task_id):
+    res = requests.request("GET",url=f"{labelstudio_api_url}{task_id}",headers=headers)
+    return res.json()
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
@@ -108,7 +112,7 @@ def predict():
             "result": results,
             "model_version":"spacy_model"
         }
-        create_prediction(results,task_id,is_prediction_exist=False,score=100)
+        create_prediction(results,task_id,score=100)
         # Check if prediction already exists in Label Studio (optional)
         # prediction = get_previous_prediction(task.get("id"))
         # is_prediction_exist = prediction is not None
