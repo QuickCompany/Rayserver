@@ -19,7 +19,7 @@ app = Flask(__name__)
 logger = app.logger
 
 # Load spaCy model (replace path with your model location)
-model = spacy.load("/home/debo/Rayserver/label-studio-spacy/ner_model_server/output/model-best")
+model = spacy.load("/home/debo/Rayserver/label-studio-spacy/output/model-best")
 
 # Define Label Studio related variables
 labelstudio_api_url = "http://localhost:8081/api/predictions/"
@@ -34,7 +34,10 @@ def get_previous_prediction(task_id):
         return response.json()
     else:
         return None
-
+def get_prediction_details(task_id):
+    res = requests.request("GET",url=f"{labelstudio_api_url}{task_id}",headers=headers)
+    print(f"prediction:{res.text}")
+    return res.json()
 
 def create_prediction(results, task_id, score):
     print(task_id)
@@ -56,9 +59,7 @@ def create_prediction(results, task_id, score):
     print(response.text)
     return response
 
-def get_prediction_details(task_id):
-    res = requests.request("GET",url=f"{labelstudio_api_url}{task_id}",headers=headers)
-    return res.json()
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
