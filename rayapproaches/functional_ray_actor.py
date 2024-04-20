@@ -30,6 +30,10 @@ from ray import serve
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel, AutoImageProcessor,TableTransformerModel
 from PIL import Image
 import torch
+
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+
 logger = logging.getLogger("ray.serve")
 
 
@@ -86,7 +90,7 @@ class TransformerOcrprocessor:
             del pixel_values
             generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
             del generated_ids
-            gc.collect()
+            torch.cuda.empty_cache()
             logger.info(generated_text)
             logger.info(f"processed batch in: {time.perf_counter() - t1}")
             return generated_text
@@ -132,7 +136,7 @@ def split_into_batches(lst, batch_size):
     for i in range(0, len(lst), batch_size):
         yield lst[i:i+batch_size]
 
-@ray.remote(num_cpus=0.5,max_calls=10)
+@ray.remote(num_cpus=0.1,max_calls=10)
 def get_pdf_text(req: Tuple):
         page, layout_predicted = req
         remaining_list = []
@@ -149,7 +153,7 @@ def get_pdf_text(req: Tuple):
             "tablelist":table_list
         }
 
-# @ray.remote(num_cpus=0.5)
+@ray.remote(num_cpus=0.2)
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
@@ -166,8 +170,8 @@ class ProcessActor:
         # url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
         link = url_json.get("link")
         slug = url_json.get("slug")
-        # pdf = requests.get(link).content
-        pdf = open("/root/Rayserver/rayapproaches/pdf24_merged.pdf","rb").read()
+        pdf = requests.get(link).content
+        # pdf = open("/root/Rayserver/rayapproaches/pdf24_merged.pdf","rb").read()
         pdf = convert_from_bytes(pdf, thread_count=20)
         start_time = time.time()
         cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
@@ -192,9 +196,16 @@ class ProcessActor:
         #     logger.info(result)
         # self.del_ocr_model()
         # self.acquire_table_pool()
-        if len(table_list) != 0:
-            res = ray.get([self.ocr.process_table.remote(table_list)])
-            logger.info(res)
+        table_images_in_batch = split_into_batches(table_list,batch_size=40)
+        table_processes = [self.ocr.process_table.remote(table_l) for table_l in table_images_in_batch if len(table_l) != 0]
+
+        result = ray.get(table_processes)
+        for res in result:
+            print(res)
+        # for table_l in table_images_in_batch:
+        #     if len(table_list) != 0:
+        #         res = ray.get([self.ocr.process_table.remote(table_list)])
+        #         logger.info(res)
         # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
         #     logger.info(result)
         # self.del_table_pool()
@@ -207,25 +218,25 @@ class ProcessActor:
 
 
 
-p = ProcessActor()
-data = [
-{"slug":"text","link":"https://blr1.vultrobjects.com/patents/2023/04/30/9c0474371786b9d0362d459e5a021043.pdf"}
-]
-for i in data:
-    p.process_url(i)
-# @serve.deployment(num_replicas=1)
-# class MainActorServe:
-#     def __init__(self) -> None:
-#         self.process_actor = ProcessActor.remote()
-#     async def __call__(self, request:Request):
-#         if request.url.path == "/predict":
-#             url_json = await request.json()
-#             for data in url_json:
-#                 self.process_actor.process_url.remote(data)
-#             return "200" 
+# p = ProcessActor()
+# data = [
+# {"slug":"text","link":"https://blr1.vultrobjects.com/patents/2023/04/30/9c0474371786b9d0362d459e5a021043.pdf"}
+# ]
+# for i in data:
+#     p.process_url(i)
+@serve.deployment(num_replicas=1)
+class MainActorServe:
+    def __init__(self) -> None:
+        self.process_actor = ProcessActor.remote()
+    async def __call__(self, request:Request):
+        if request.url.path == "/predict":
+            url_json = await request.json()
+            for data in url_json:
+                self.process_actor.process_url.remote(data)
+            return "200" 
 
 
 
-# app: serve.Application = MainActorServe.bind()
-# serve.run(name="newapp", target=app,
-#           route_prefix="/", host="0.0.0.0", port=8000)
+app: serve.Application = MainActorServe.bind()
+serve.run(name="newapp", target=app,
+          route_prefix="/", host="0.0.0.0", port=8000)
