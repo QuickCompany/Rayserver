@@ -1,7 +1,5 @@
-import io
-import threading
-import paddle.vision
 import ray
+import gc
 import os
 # import boto3
 import time
@@ -28,8 +26,6 @@ from ray.util.queue import Queue
 # import easyocr
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import chain
-from paddleocr import PaddleOCR, PPStructure
-import paddle
 from ray import serve
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel, AutoImageProcessor,TableTransformerModel
 from PIL import Image
@@ -65,7 +61,7 @@ def load_layout():
     return layout_model
 
 
-@ray.remote(num_gpus=0.5,num_cpus=0.05)
+@ray.remote(num_gpus=0.5,num_cpus=0.5)
 class TransformerOcrprocessor:
     def __init__(self) -> None:
         
@@ -83,11 +79,14 @@ class TransformerOcrprocessor:
             t1 = time.perf_counter()
             image_list = [Image.fromarray(image) for image in images]
             # logger.info(image)
-            pixel_values = self.processor(images=image_list, return_tensors="pt").pixel_values
+            pixel_values = self.processor(images=image_list, return_tensors="pt").pixel_values.to(self.device)
             # logger.info(self.device)
             # logger.info(pixel_values)
             generated_ids = self.model.generate(pixel_values)
+            del pixel_values
             generated_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
+            del generated_ids
+            gc.collect()
             logger.info(generated_text)
             logger.info(f"processed batch in: {time.perf_counter() - t1}")
             return generated_text
@@ -95,7 +94,7 @@ class TransformerOcrprocessor:
             logger.info(e)
     async def process_table(self,images):
         image_list = [Image.fromarray(image) for image in images]
-        inputs = self.image_processor(images=image_list, return_tensors="pt")
+        inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
         outputs = self.table_model(**inputs)
         results = {"last_hidden_state":outputs["last_hidden_state"].to("cpu"),
                    "encoder_last_hidden_state": outputs["encoder_last_hidden_state"].to("cpu")
@@ -133,7 +132,7 @@ def split_into_batches(lst, batch_size):
     for i in range(0, len(lst), batch_size):
         yield lst[i:i+batch_size]
 
-@ray.remote(num_cpus=0.01)
+@ray.remote(num_cpus=0.5,max_calls=10)
 def get_pdf_text(req: Tuple):
         page, layout_predicted = req
         remaining_list = []
@@ -150,7 +149,7 @@ def get_pdf_text(req: Tuple):
             "tablelist":table_list
         }
 
-# @ray.remote(num_cpus=0.01)
+# @ray.remote(num_cpus=0.5)
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
@@ -167,7 +166,8 @@ class ProcessActor:
         # url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
         link = url_json.get("link")
         slug = url_json.get("slug")
-        pdf = requests.get(link).content
+        # pdf = requests.get(link).content
+        pdf = open("/root/Rayserver/rayapproaches/pdf24_merged.pdf","rb").read()
         pdf = convert_from_bytes(pdf, thread_count=20)
         start_time = time.time()
         cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
@@ -179,7 +179,7 @@ class ProcessActor:
         remaining_list = list(chain.from_iterable([res.get("textlist") for res in results if res.get("textlist")  is not None]))
         table_list = list(chain.from_iterable([res.get("tablelist") for res in results if res.get("tablelist") is not None]))
         logger.info(table_list)
-        result_in_batch = split_into_batches(remaining_list,50)
+        result_in_batch = split_into_batches(remaining_list,80)
         t1 = time.time()
         html_string = """"""
         for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
