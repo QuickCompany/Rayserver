@@ -1,3 +1,4 @@
+import datetime
 import json
 import ray
 import gc
@@ -31,7 +32,7 @@ from ray import serve
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel, AutoImageProcessor,TableTransformerModel
 from PIL import Image
 import torch
-
+from collections import namedtuple
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
@@ -137,22 +138,22 @@ def split_into_batches(lst, batch_size):
     for i in range(0, len(lst), batch_size):
         yield lst[i:i+batch_size]
 
-@ray.remote(num_cpus=0.1,max_calls=10)
-def get_pdf_text(req: Tuple):
-        page, layout_predicted = req
-        remaining_list = []
-        table_list = []
-        for idx, block in enumerate(layout_predicted):
-            cropped_page = page.crop(
-                (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
-            if block.type != Label.EXTRA.value and block.type in (Label.TEXT.value, Label.LIST.value, Label.TITLE.value):
-                remaining_list.append(np.array(cropped_page))
-            elif block.type==Label.TABLE.value:
-                table_list.append(np.array(cropped_page))
-        return {
-            "textlist":remaining_list,
-            "tablelist":table_list
-        }
+# @ray.remote(num_cpus=0.5)
+# def get_pdf_text(req: Tuple):
+#         page, layout_predicted = req
+#         remaining_list = []
+#         table_list = []
+#         for idx, block in enumerate(layout_predicted):
+#             cropped_page = page.crop(
+#                 (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
+#             if block.type != Label.EXTRA.value and block.type in (Label.TEXT.value, Label.LIST.value, Label.TITLE.value):
+#                 remaining_list.append(np.array(cropped_page))
+#             elif block.type==Label.TABLE.value:
+#                 table_list.append(np.array(cropped_page))
+#         return {
+#             "textlist":remaining_list,
+#             "tablelist":table_list
+#         }
 
 @ray.remote(num_cpus=0.2)
 class ProcessActor:
@@ -176,6 +177,21 @@ class ProcessActor:
                 "message":"processed"
             }
         return None
+    def get_pdf_text(self,req: Tuple):
+        page, layout_predicted = req
+        remaining_list = []
+        table_list = []
+        for idx, block in enumerate(layout_predicted):
+            cropped_page = page.crop(
+                (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
+            if block.type != Label.EXTRA.value and block.type in (Label.TEXT.value, Label.LIST.value, Label.TITLE.value):
+                remaining_list.append(np.array(cropped_page))
+            elif block.type==Label.TABLE.value:
+                table_list.append(np.array(cropped_page))
+        return {
+            "textlist":remaining_list,
+            "tablelist":table_list
+        }
         
     def process_url(self,url_json):
         # url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
@@ -185,16 +201,20 @@ class ProcessActor:
         # pdf = open("/root/Rayserver/rayapproaches/pdf24_merged.pdf","rb").read()
         pdf = convert_from_bytes(pdf, thread_count=20)
         start_time = time.time()
+        logger.info(f"started at:{str(datetime.datetime.utcnow())}")
         cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
         # logger.info(cor_1)
         # self.del_model()
+        t1 = time.time()
         page_pred = list(zip(pdf,cor_1))
-        results = list(ray.get([get_pdf_text.remote(i) for i in page_pred]))
+        # results = list(ray.get([get_pdf_text.remote(i) for i in page_pred]))
+        results = [self.get_pdf_text(i) for i in page_pred]
 
         remaining_list = list(chain.from_iterable([res.get("textlist") for res in results if res.get("textlist")  is not None]))
         table_list = list(chain.from_iterable([res.get("tablelist") for res in results if res.get("tablelist") is not None]))
-        logger.info(table_list)
         result_in_batch = split_into_batches(remaining_list,80)
+        t2 = time.time()
+        logger.info(f"time to process lists:{t2 - t1}")
         t1 = time.time()
         html_string = """"""
         for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
@@ -225,7 +245,10 @@ class ProcessActor:
             "html":html_string,
             "slug":slug
         })
+        end_time = time.time()
         logger.info(f"time take:{time.time()-t1}")
+        logger.info(f"actual time took:{end_time - start_time}")
+        logger.info(f"finished at:{str(datetime.datetime.utcnow())}")
         # self.acquire_model()
         
 
