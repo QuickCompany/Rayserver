@@ -1,3 +1,4 @@
+import json
 import ray
 import gc
 import os
@@ -166,6 +167,16 @@ class ProcessActor:
         ray.kill(self.layout_model)
     def acquire_model(self):
         self.layout_model  = Layoutinfer.remote()
+    def post_to_api(self,data):
+        url = "https://www.quickcompany.in/api/v1/patents"
+        res = requests.post(url=url,json=data)
+        logger.info(f"res is:{res.text}")
+        if res.status_code == 200:
+            return {
+                "message":"processed"
+            }
+        return None
+        
     def process_url(self,url_json):
         # url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
         link = url_json.get("link")
@@ -189,7 +200,7 @@ class ProcessActor:
         for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
             logger.info(result)
             for text in result:
-                html_string+=text
+                html_string+=f"<p>{text}</p>"
             # print("pass")
         logger.info(html_string)
         # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
@@ -210,6 +221,10 @@ class ProcessActor:
         #     logger.info(result)
         # self.del_table_pool()
         # self.acquire_pool()
+        res = self.post_to_api({
+            "html":html_string,
+            "slug":slug
+        })
         logger.info(f"time take:{time.time()-t1}")
         # self.acquire_model()
         

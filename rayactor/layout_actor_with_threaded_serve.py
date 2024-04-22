@@ -8,7 +8,7 @@ import requests
 import numpy as np
 import logging
 import layoutparser as lp
-import pytesseract
+# import pytesseract
 from pdf2image import convert_from_bytes
 from typing import Dict, List, Tuple
 
@@ -91,25 +91,25 @@ class VultrImageUploader(object):
         return image_url
 
 
-@ray.remote(num_cpus=1)
-class TesseractProcessor:
-    def __init__(self) -> None:
-        self.tesseract_path = "/usr/bin/tesseract"
-        self.custom_config = r"--oem 3 --psm 6 -c tessedit_use_gpu=1"
-        pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
+# @ray.remote(num_cpus=1)
+# class TesseractProcessor:
+#     def __init__(self) -> None:
+#         self.tesseract_path = "/usr/bin/tesseract"
+#         self.custom_config = r"--oem 3 --psm 6 -c tessedit_use_gpu=1"
+#         pytesseract.pytesseract.tesseract_cmd = self.tesseract_path
 
-    def convert_image_to_text(self, data:Tuple):
-        logger.info(f"inside the function")
-        t1 = time.perf_counter()
-        image, block_type = data
+#     def convert_image_to_text(self, data:Tuple):
+#         logger.info(f"inside the function")
+#         t1 = time.perf_counter()
+#         image, block_type = data
 
-        process_text = pytesseract.image_to_string(
-            image, config=self.custom_config)
-        # process_text = self.easyocr.readtext(np.array(image),detail=0,paragraph=True)[0]
-        t2 = time.perf_counter() - t1
-        logger.info(f"time took to process tesseract is: {t2}")
-        logger.info(process_text)
-        return process_text
+#         process_text = pytesseract.image_to_string(
+#             image, config=self.custom_config)
+#         # process_text = self.easyocr.readtext(np.array(image),detail=0,paragraph=True)[0]
+#         t2 = time.perf_counter() - t1
+#         logger.info(f"time took to process tesseract is: {t2}")
+#         logger.info(process_text)
+#         return process_text
 
 
 # @ray.remote(num_gpus=0.1)
