@@ -159,7 +159,7 @@ class ProcessActor:
         self.layout_pool = ActorPool([self.layout_model,Layoutinfer.remote()])
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
         self.ocr = TransformerOcrprocessor.remote()
-        self.pool = ActorPool([self.ocr,TransformerOcrprocessor.remote()])
+        self.pool = ActorPool([self.ocr])
         # self.table_ocr = TransformerTableProcessor.remote()
         # self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def del_model(self):
@@ -167,14 +167,17 @@ class ProcessActor:
     def acquire_model(self):
         self.layout_model  = Layoutinfer.remote()
     def post_to_api(self,data):
-        url = "https://www.quickcompany.in/api/v1/patents"
-        res = requests.post(url=url,json=data)
-        logger.info(f"res is:{res.text}")
-        if res.status_code == 200:
-            return {
-                "message":"processed"
-            }
-        return None
+        try:
+            url = "https://www.quickcompany.in/api/v1/patents"
+            res = requests.post(url=url,json=data)
+            logger.info(f"res is:{res.text}")
+            if res.status_code == 200:
+                return {
+                    "message":"processed"
+                }
+            return None
+        except Exception as e:
+            logger.debug(e)
     def get_pdf_text(self,req: Tuple):
         page, layout_predicted = req
         remaining_list = []
