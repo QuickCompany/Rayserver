@@ -68,7 +68,7 @@ def load_layout():
     return layout_model
 
 
-@ray.remote(num_gpus=0.3,num_cpus=0.2)
+@ray.remote(num_gpus=0.1,num_cpus=0.1)
 class TransformerOcrprocessor:
     def __init__(self) -> None:
         
@@ -109,7 +109,7 @@ class TransformerOcrprocessor:
         return results
 
 
-@ray.remote(num_gpus=0.1,num_cpus=0.2)
+@ray.remote(num_gpus=0.1,num_cpus=0.1)
 class Layoutinfer:
     def __init__(self) -> None:
         model_path: str = "/root/Rayserver/model/model_final.pth"
@@ -152,7 +152,7 @@ class Layoutinfer:
 #             "tablelist":table_list
 #         }
 
-@ray.remote(num_cpus=0.2)
+@ray.remote(num_cpus=0.1)
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
@@ -265,10 +265,11 @@ class ProcessActor:
 # ]
 # for i in data:
 #     p.process_url(i)
-@serve.deployment(num_replicas=1)
+@serve.deployment(num_replicas=2)
 class MainActorServe:
     def __init__(self) -> None:
         self.process_actor = ProcessActor.remote()
+        # self.process_actor_2 = ProcessActor.remote()
         # self.process_actor_2 = ProcessActor.remote()
         # self.pool = ActorPool([self.process_actor])
     async def __call__(self, request:Request):
