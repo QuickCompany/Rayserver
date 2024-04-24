@@ -1,5 +1,6 @@
 import datetime
 import json
+import threading
 import ray
 import gc
 import os
@@ -67,7 +68,7 @@ def load_layout():
     return layout_model
 
 
-@ray.remote(num_gpus=0.5,num_cpus=0.5)
+@ray.remote(num_gpus=0.3,num_cpus=0.2)
 class TransformerOcrprocessor:
     def __init__(self) -> None:
         
@@ -108,7 +109,7 @@ class TransformerOcrprocessor:
         return results
 
 
-@ray.remote(num_gpus=0.5,num_cpus=0.01, concurrency_groups={"io": 2, "compute": 10})
+@ray.remote(num_gpus=0.1,num_cpus=0.2)
 class Layoutinfer:
     def __init__(self) -> None:
         model_path: str = "/root/Rayserver/model/model_final.pth"
@@ -127,16 +128,12 @@ class Layoutinfer:
             config_path, model_path, extra_config=extra_config, label_map=label_map
         )
 
-    @ray.method(concurrency_group="compute")
-    async def detect(self, image):
+    def detect(self, image):
         result = self.model.detect(image)
         logger.info(result)
         return result
 
-# Function to split list into batches
-def split_into_batches(lst, batch_size):
-    for i in range(0, len(lst), batch_size):
-        yield lst[i:i+batch_size]
+
 
 # @ray.remote(num_cpus=0.5)
 # def get_pdf_text(req: Tuple):
@@ -159,9 +156,10 @@ def split_into_batches(lst, batch_size):
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
+        self.layout_pool = ActorPool([self.layout_model,Layoutinfer.remote()])
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
         self.ocr = TransformerOcrprocessor.remote()
-        self.pool = ActorPool([self.ocr])
+        self.pool = ActorPool([self.ocr,TransformerOcrprocessor.remote()])
         # self.table_ocr = TransformerTableProcessor.remote()
         # self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def del_model(self):
@@ -192,7 +190,11 @@ class ProcessActor:
             "textlist":remaining_list,
             "tablelist":table_list
         }
-        
+        # Function to split list into batches
+    @staticmethod
+    def split_into_batches(lst, batch_size):
+        for i in range(0, len(lst), batch_size):
+            yield lst[i:i+batch_size]
     def process_url(self,url_json):
         # url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
         link = url_json.get("link")
@@ -202,7 +204,8 @@ class ProcessActor:
         pdf = convert_from_bytes(pdf, thread_count=20)
         start_time = time.time()
         logger.info(f"started at:{str(datetime.datetime.utcnow())}")
-        cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
+        cor_1 = list(self.layout_pool.map(lambda k,v:k.detect.remote(v),pdf))
+        # cor_1 =list(ray.get([self.layout_model.detect.remote(i) for i in pdf]))
         # logger.info(cor_1)
         # self.del_model()
         t1 = time.time()
@@ -212,7 +215,7 @@ class ProcessActor:
 
         remaining_list = list(chain.from_iterable([res.get("textlist") for res in results if res.get("textlist")  is not None]))
         table_list = list(chain.from_iterable([res.get("tablelist") for res in results if res.get("tablelist") is not None]))
-        result_in_batch = split_into_batches(remaining_list,80)
+        result_in_batch = self.split_into_batches(remaining_list,90)
         t2 = time.time()
         logger.info(f"time to process lists:{t2 - t1}")
         t1 = time.time()
@@ -227,12 +230,12 @@ class ProcessActor:
         #     logger.info(result)
         # self.del_ocr_model()
         # self.acquire_table_pool()
-        table_images_in_batch = split_into_batches(table_list,batch_size=40)
+        table_images_in_batch = self.split_into_batches(table_list,batch_size=60)
         table_processes = [self.ocr.process_table.remote(table_l) for table_l in table_images_in_batch if len(table_l) != 0]
 
         result = ray.get(table_processes)
-        for res in result:
-            print(res)
+        # for res in result:
+        #     print(res)
         # for table_l in table_images_in_batch:
         #     if len(table_list) != 0:
         #         res = ray.get([self.ocr.process_table.remote(table_list)])
@@ -266,9 +269,12 @@ class ProcessActor:
 class MainActorServe:
     def __init__(self) -> None:
         self.process_actor = ProcessActor.remote()
+        # self.process_actor_2 = ProcessActor.remote()
+        # self.pool = ActorPool([self.process_actor])
     async def __call__(self, request:Request):
         if request.url.path == "/predict":
             url_json = await request.json()
+            # self.pool.map_unordered(lambda a,v:a.process_url.remote(v),url_json)
             for data in url_json:
                 self.process_actor.process_url.remote(data)
             return "200" 
