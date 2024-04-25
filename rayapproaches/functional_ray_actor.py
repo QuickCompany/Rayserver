@@ -68,7 +68,7 @@ def load_layout():
     return layout_model
 
 @ray.remote(num_gpus=0.1,num_cpus=0.1)
-class TransFormerTable:
+class TransformerTableProcessor:
     def __init__(self) -> None:
         
         self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
@@ -177,7 +177,7 @@ class ProcessActor:
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
         self.ocr = TransformerOcrprocessor.remote()
         self.pool = ActorPool([self.ocr])
-        # self.table_ocr = TransformerTableProcessor.remote()
+        self.table_ocr = TransformerTableProcessor.remote()
         # self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def del_model(self):
         ray.kill(self.layout_model)
@@ -251,7 +251,7 @@ class ProcessActor:
         # self.del_ocr_model()
         # self.acquire_table_pool()
         table_images_in_batch = self.split_into_batches(table_list,batch_size=60)
-        table_processes = [self.ocr.process_table.remote(table_l) for table_l in table_images_in_batch if len(table_l) != 0]
+        table_processes = [self.table_ocr.process_table.remote(table_l) for table_l in table_images_in_batch if len(table_l) != 0]
 
         result = ray.get(table_processes)
         # for res in result:
