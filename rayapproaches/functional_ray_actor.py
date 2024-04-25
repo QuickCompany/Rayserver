@@ -67,6 +67,23 @@ def load_layout():
     )
     return layout_model
 
+@ray.remote(num_gpus=0.1,num_cpus=0.1)
+class TransFormerTable:
+    def __init__(self) -> None:
+        
+        self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
+        logger.info(self.device)
+        self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
+        self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection")
+        self.table_model.to(self.device)
+    async def process_table(self,images):
+        image_list = [Image.fromarray(image) for image in images]
+        inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
+        outputs = self.table_model(**inputs)
+        results = {"last_hidden_state":outputs["last_hidden_state"].to("cpu"),
+                   "encoder_last_hidden_state": outputs["encoder_last_hidden_state"].to("cpu")
+                   }
+        return results
 
 @ray.remote(num_gpus=0.1,num_cpus=0.1)
 class TransformerOcrprocessor:
@@ -74,12 +91,12 @@ class TransformerOcrprocessor:
         
         self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
         logger.info(self.device)
-        self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-small-printed')
-        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-small-printed')
+        self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed')
+        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed')
         self.model.to(self.device)
-        self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
-        self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection")
-        self.table_model.to(self.device)
+        # self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
+        # self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection")
+        # self.table_model.to(self.device)
     async def process_image(self,images):
         try:
             # image = Image.fromarray(image)
@@ -99,14 +116,14 @@ class TransformerOcrprocessor:
             return generated_text
         except Exception as e:
             logger.info(e)
-    async def process_table(self,images):
-        image_list = [Image.fromarray(image) for image in images]
-        inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
-        outputs = self.table_model(**inputs)
-        results = {"last_hidden_state":outputs["last_hidden_state"].to("cpu"),
-                   "encoder_last_hidden_state": outputs["encoder_last_hidden_state"].to("cpu")
-                   }
-        return results
+    # async def process_table(self,images):
+    #     image_list = [Image.fromarray(image) for image in images]
+    #     inputs = self.image_processor(images=image_list, return_tensors="pt").to(self.device)
+    #     outputs = self.table_model(**inputs)
+    #     results = {"last_hidden_state":outputs["last_hidden_state"].to("cpu"),
+    #                "encoder_last_hidden_state": outputs["encoder_last_hidden_state"].to("cpu")
+    #                }
+    #     return results
 
 
 @ray.remote(num_gpus=0.1,num_cpus=0.1)
@@ -268,7 +285,7 @@ class ProcessActor:
 # ]
 # for i in data:
 #     p.process_url(i)
-@serve.deployment(num_replicas=2)
+@serve.deployment(num_replicas=1)
 class MainActorServe:
     def __init__(self) -> None:
         self.process_actor = ProcessActor.remote()
