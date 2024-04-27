@@ -169,11 +169,11 @@ class Layoutinfer:
 #             "tablelist":table_list
 #         }
 
-@ray.remote(num_cpus=0.1)
+@ray.remote(num_cpus=0.5)
 class ProcessActor:
     def __init__(self) -> None:
         self.layout_model = Layoutinfer.remote()
-        self.layout_pool = ActorPool([self.layout_model,Layoutinfer.remote()])
+        self.layout_pool = ActorPool([self.layout_model])
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
         self.ocr = TransformerOcrprocessor.remote()
         self.pool = ActorPool([self.ocr])
@@ -199,7 +199,9 @@ class ProcessActor:
         page, layout_predicted = req
         remaining_list = []
         table_list = []
+        type_list = []
         for idx, block in enumerate(layout_predicted):
+            type_list.append(block.type)
             cropped_page = page.crop(
                 (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
             if block.type != Label.EXTRA.value and block.type in (Label.TEXT.value, Label.LIST.value, Label.TITLE.value):
@@ -208,7 +210,8 @@ class ProcessActor:
                 table_list.append(np.array(cropped_page))
         return {
             "textlist":remaining_list,
-            "tablelist":table_list
+            "tablelist":table_list,
+            "text_type_list":type_list
         }
         # Function to split list into batches
     @staticmethod
@@ -235,15 +238,25 @@ class ProcessActor:
 
         remaining_list = list(chain.from_iterable([res.get("textlist") for res in results if res.get("textlist")  is not None]))
         table_list = list(chain.from_iterable([res.get("tablelist") for res in results if res.get("tablelist") is not None]))
+        type_list = list(chain.from_iterable([res.get("text_type_list") for res in results if res.get("text_type_list") is not None]))
         result_in_batch = self.split_into_batches(remaining_list,90)
         t2 = time.time()
         logger.info(f"time to process lists:{t2 - t1}")
         t1 = time.time()
         html_string = """"""
+        idx = 0
         for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
             logger.info(result)
             for text in result:
-                html_string+=f"<p>{text}</p>"
+                if type_list[idx] == "title":
+                    html_string+=f"<h2>{text}</h2>"
+                elif type_list[idx] == "list":
+                    html_string+=f"<li>{text}</li>"
+                elif type_list[idx] == "text":
+                    html_string+=f"<p>{text}</p>"
+                idx+=1
+        idx=0
+                
             # print("pass")
         logger.info(html_string)
         # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
