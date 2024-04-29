@@ -286,7 +286,21 @@ class ProcessActor:
         # logger.info(cor_1)
         # self.del_model()
         t1 = time.time()
+        image_tuple = namedtuple('Image',['image_link','idx'])
         page_pred = list(zip(pdf,cor_1))
+        images_list = []
+        image_idx = 0
+        for page,predictions in page_pred:
+            for block in predictions:
+                if block.type in (Label.FIGURE.value,Label.FORMULA.value):
+                    block_type = block.type
+                    cropped_page = page.crop(
+                        (block.block.x_1, block.block.y_1, block.block.x_2, block.block.y_2))
+                    image_link = self.img_uploader.upload_image(cropped_page)
+                    images_list.append(image_tuple(image_link,image_idx))
+                image_idx+=1
+        image_idx = 0
+        logger.info(images_list)
         # results = list(ray.get([get_pdf_text.remote(i) for i in page_pred]))
         results = [self.get_pdf_text(i) for i in page_pred]
 
@@ -297,30 +311,38 @@ class ProcessActor:
         t2 = time.time()
         logger.info(f"time to process lists:{t2 - t1}")
         t1 = time.time()
-        html_string = """"""
+        html_string = list()
         idx = 0
-        for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
-            logger.info(result)
-            for text in result:
-                if type_list[idx] == "title":
-                    html_string+=f"<h2>{text}</h2>"
-                elif type_list[idx] == "list":
-                    html_string+=f"<li>{text}</li>"
-                elif type_list[idx] == "text":
-                    html_string+=f"<p>{text}</p>"
-                idx+=1
-        idx=0
-                
+        try:
+            for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
+                logger.info(result)
+                for text in result:
+                    if type_list[idx] == "title":
+                        html_string.append(f"<h2>{text}</h2>")
+                    elif type_list[idx] == "list":
+                        html_string.append(f"<li>{text}</li>")
+                    elif type_list[idx] == "text":
+                        html_string.append(f"<p>{text}</p>")
+                    idx+=1
+        except Exception as e:
+            logger.info(e)
+        idx=0   
+        try:
+            for image in images_list:
+                html_string.insert(image.idx,f'<img class="img-fluid" src="{image.image_link}" alt="No image">')
+        except Exception as e:
+            logger.info(e)
             # print("pass")
+        html_string = "".join(html_string)
         logger.info(html_string)
         # for result in self.pool.map(lambda a,v:a.process_table.remote(v),table_list):
         #     logger.info(result)
         # self.del_ocr_model()
         # self.acquire_table_pool()
         table_images_in_batch = self.split_into_batches(table_list,batch_size=60)
-        table_processes = [self.table_ocr.process_table.remote(table_l) for table_l in table_images_in_batch if len(table_l) != 0]
+        # table_processes = [self.table_ocr.process_table.remote(table_l) for table_l in table_images_in_batch if len(table_l) != 0]
 
-        result = ray.get(table_processes)
+        # result = ray.get(table_processes)
         # for res in result:
         #     print(res)
         # for table_l in table_images_in_batch:
