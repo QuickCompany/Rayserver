@@ -144,8 +144,8 @@ class TransformerOcrprocessor:
         
         self.device = torch.device('cuda:0' if torch.cuda.is_available else 'cpu')
         logger.info(self.device)
-        self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-base-printed')
-        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-base-printed')
+        self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-large-printed')
+        self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-large-printed')
         self.model.to(self.device)
         # self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
         # self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection")
