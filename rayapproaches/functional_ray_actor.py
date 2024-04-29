@@ -3,6 +3,7 @@ import json
 import threading
 import ray
 import gc
+import boto3
 import os
 # import boto3
 import time
@@ -11,6 +12,7 @@ import requests
 import numpy as np
 import logging
 import layoutparser as lp
+import io
 # import pytesseract
 from pdf2image import convert_from_bytes
 from typing import Dict, List, Tuple
@@ -48,6 +50,57 @@ class Label(str, Enum):
     TABLE = "table"
     LIST = "list"
     FIGURE = "figure"
+
+
+class VultrImageUploader(object):
+    def __init__(self) -> None:
+        load_dotenv("/root/Rayserver/.env")
+        self.hostname = os.getenv("HOST_URL")
+        secret_key = os.getenv("VULTR_OBJECT_STORAGE_SECRET_KEY")
+        access_key = os.getenv("VULTR_OBJECT_STORAGE_ACCESS_KEY")
+        self.figures_bucket = os.getenv("FIGURES_BUCKET")
+        session = boto3.session.Session()
+        self.client = session.client(
+            "s3",
+            **{
+                "region_name": self.hostname.split(".")[0],
+                "endpoint_url": "https://" + self.hostname,
+                "aws_access_key_id": access_key,
+                "aws_secret_access_key": secret_key,
+            },
+        )
+
+    def convert_image_to_byte(self, image):
+        byte_io = io.BytesIO()
+        image.save(byte_io, format="JPEG")
+        cropped_image_bytes = byte_io.getvalue()
+
+        return cropped_image_bytes
+
+    def upload_image(self, image):
+        # Define a function to upload image in the background
+        def upload(image, image_name):
+            image_bytes = self.convert_image_to_byte(image)
+            self.client.upload_fileobj(
+                io.BytesIO(image_bytes),
+                self.figures_bucket,
+                image_name,
+                ExtraArgs={"ACL": "public-read"},
+            )
+
+        # Generate a unique image name
+        image_name = f"{str(uuid4())}.jpg"
+
+        # Start a new thread to upload the image
+        upload_thread = threading.Thread(
+            target=upload, args=(image, image_name))
+        upload_thread.start()
+
+        # Construct the image URL
+        image_url = f"https://{self.hostname}/{self.figures_bucket}/{image_name}"
+
+        # Return the image URL
+        return image_url
 
 def load_layout():
     model_path: str = "/root/Rayserver/model/model_final.pth"
@@ -178,6 +231,7 @@ class ProcessActor:
         self.ocr = TransformerOcrprocessor.remote()
         self.pool = ActorPool([self.ocr])
         self.table_ocr = TransformerTableProcessor.remote()
+        self.img_uploader = VultrImageUploader()
         # self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
     def del_model(self):
         ray.kill(self.layout_model)
