@@ -28,13 +28,14 @@ from starlette.requests import Request
 from copy import deepcopy
 from ray.util.actor_pool import ActorPool
 from ray.util.queue import Queue
-# import easyocr
+import easyocr
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from itertools import chain
 from ray import serve
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel, AutoImageProcessor,TableTransformerModel
 from PIL import Image
 import torch
+
 from collections import namedtuple
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
@@ -138,6 +139,22 @@ class TransformerTableProcessor:
                    }
         return results
 
+@ray.remote(num_gpus=0.1,num_cpus=0.3)
+class EasyOcrProcessor:
+    def __init__(self) -> None:
+        self.easyocr = easyocr.Reader(["en"], gpu=True)
+
+    async def process_image(self, data):
+        t1 = time.perf_counter()
+        text_list = list()
+        for image in data:
+            process_text = self.easyocr.readtext(image,detail=0, paragraph=True)
+            logger.info(process_text)
+            text_list.extend(process_text)
+        t2 = time.perf_counter() - t1
+        logger.info(f"text processed:{text_list}")
+        logger.info(f"time took to process easyocr is: {t2}")
+        return text_list
 @ray.remote(num_gpus=0.1,num_cpus=0.1)
 class TransformerOcrprocessor:
     def __init__(self) -> None:
@@ -228,7 +245,8 @@ class ProcessActor:
         self.layout_model = Layoutinfer.remote()
         self.layout_pool = ActorPool([self.layout_model])
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
-        self.ocr = TransformerOcrprocessor.remote()
+        # self.ocr = TransformerOcrprocessor.remote()
+        self.ocr = EasyOcrProcessor.remote()
         self.pool = ActorPool([self.ocr])
         self.table_ocr = TransformerTableProcessor.remote()
         self.img_uploader = VultrImageUploader()
@@ -271,6 +289,9 @@ class ProcessActor:
     @staticmethod
     def split_into_batches(lst, batch_size):
         for i in range(0, len(lst), batch_size):
+            batch = lst[i:i+batch_size]
+            if len(batch) < batch_size:
+                batch += [0] * (batch_size - len(batch))  # Pad with zeros
             yield lst[i:i+batch_size]
     def process_url(self,url_json):
         # url_json = {"slug":"sediment-extractor","link":"https://blr1.vultrobjects.com/patents/202211077651/documents/3-6b53b815709400005c34b69b4ead8a79.pdf"}
@@ -303,18 +324,18 @@ class ProcessActor:
         logger.info(images_list)
         # results = list(ray.get([get_pdf_text.remote(i) for i in page_pred]))
         results = [self.get_pdf_text(i) for i in page_pred]
-
-        remaining_list = list(chain.from_iterable([res.get("textlist") for res in results if res.get("textlist")  is not None]))
+        pages_data = [res.get("textlist") for res in results if res.get("textlist")  is not None]
+        remaining_list = list(chain.from_iterable(pages_data))
         table_list = list(chain.from_iterable([res.get("tablelist") for res in results if res.get("tablelist") is not None]))
         type_list = list(chain.from_iterable([res.get("text_type_list") for res in results if res.get("text_type_list") is not None]))
-        result_in_batch = self.split_into_batches(remaining_list,90)
+        # result_in_batch = self.split_into_batches(remaining_list,90)
         t2 = time.time()
         logger.info(f"time to process lists:{t2 - t1}")
         t1 = time.time()
         html_string = list()
         idx = 0
         try:
-            for result in self.pool.map(lambda a,v:a.process_image.remote(v),result_in_batch):
+            for result in self.pool.map(lambda a,v:a.process_image.remote(v),pages_data):
                 logger.info(result)
                 for text in result:
                     if type_list[idx] == "title":
