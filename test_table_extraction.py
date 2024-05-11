@@ -11,7 +11,7 @@ first_page = np.array(pdf[0]).tobytes()
 
 # first_page.save(open("test.jpg","wb+"))
 
-image = Image(BytesIO(first_page).read())
+image = Image("./test.jpg")
 
 extracted_tables = image.extract_tables(ocr=ocr,min_confidence=50)
 

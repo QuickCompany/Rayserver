@@ -34,6 +34,8 @@ from transformers import TrOCRProcessor, VisionEncoderDecoderModel, AutoImagePro
 from PIL import Image
 import torch
 from collections import namedtuple
+from img2table.document import Image
+from img2table.ocr import EasyOCR
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
@@ -77,9 +79,6 @@ class TransformerOcrprocessor:
         self.processor = TrOCRProcessor.from_pretrained('microsoft/trocr-small-printed')
         self.model = VisionEncoderDecoderModel.from_pretrained('microsoft/trocr-small-printed')
         self.model.to(self.device)
-        self.image_processor = AutoImageProcessor.from_pretrained("microsoft/table-transformer-detection")
-        self.table_model = TableTransformerModel.from_pretrained("microsoft/table-transformer-detection")
-        self.table_model.to(self.device)
     async def process_image(self,images):
         try:
             # image = Image.fromarray(image)
@@ -160,8 +159,16 @@ class ProcessActor:
         # self.pool = ActorPool([PaddleOcr.remote() for i in range(1)])
         self.ocr = TransformerOcrprocessor.remote()
         self.pool = ActorPool([self.ocr,TransformerOcrprocessor.remote()])
+        self.tableocr = EasyOCR()
         # self.table_ocr = TransformerTableProcessor.remote()
         # self.tableprocessorpool = ActorPool([TransformerTableProcessor.remote()])
+    def extract_table(self,img_path):
+        image = Image(img_path)
+        extracted_tables = image.extract_tables(ocr=self.tableocr,min_confidence=50)
+        table_html = ""
+        for table in extracted_tables:
+            table_html+=table.html
+        return table_html
     def del_model(self):
         ray.kill(self.layout_model)
     def acquire_model(self):
@@ -191,6 +198,7 @@ class ProcessActor:
             "tablelist":table_list
         }
         # Function to split list into batches
+    
     @staticmethod
     def split_into_batches(lst, batch_size):
         for i in range(0, len(lst), batch_size):
